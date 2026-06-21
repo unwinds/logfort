@@ -244,7 +244,13 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 		args = append(args, since)
 	}
 
-	st := &Stats{Window: window}
+	st := &Stats{
+		Window:       window,
+		TopIPs:       []TopIP{},
+		TopCountries: []TopCountry{},
+		TopUsernames: []TopUsername{},
+		Timeline:     []TimeBucket{},
+	}
 
 	// Total attempts (non-ban/unban events)
 	baseWhere := whereTS
