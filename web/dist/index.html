@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSHWatch</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --border:  #2a2d3a;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+      --accent:  #38bdf8;
+      --danger:  #f87171;
+      --success: #4ade80;
+      --warn:    #fbbf24;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
+    header .version { font-size: 11px; color: var(--muted); }
+    header .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+    header .spacer { flex: 1; }
+    header select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 4px 8px; border-radius: 4px; font-size: 13px; cursor: pointer;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-card {
+      background: var(--surface);
+      padding: 16px 20px;
+    }
+    .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .stat-card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+    .stat-card .value.danger  { color: var(--danger); }
+    .stat-card .value.success { color: var(--success); }
+    .stat-card .value.warn    { color: var(--warn); }
+    .stat-card .value.accent  { color: var(--accent); }
+
+    .main { display: grid; grid-template-columns: 1fr 280px; gap: 0; }
+
+    .events-panel { border-right: 1px solid var(--border); }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .panel-header h2 { font-size: 13px; font-weight: 600; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th {
+      text-align: left; padding: 8px 12px;
+      background: var(--surface); color: var(--muted);
+      font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+      position: sticky; top: 0; z-index: 1;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 7px 12px; border-bottom: 1px solid var(--border); }
+    tr:hover td { background: rgba(255,255,255,.03); }
+
+    .badge {
+      display: inline-block; padding: 2px 6px; border-radius: 3px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+    }
+    .badge-failed    { background: rgba(248,113,113,.15); color: var(--danger); }
+    .badge-accepted  { background: rgba(74,222,128,.15);  color: var(--success); }
+    .badge-ban       { background: rgba(251,191,36,.15);  color: var(--warn); }
+    .badge-unban     { background: rgba(100,116,139,.15); color: var(--muted); }
+    .badge-other     { background: rgba(56,189,248,.15);  color: var(--accent); }
+
+    .ip { font-family: monospace; color: var(--accent); }
+    .user { font-family: monospace; }
+    .ts { color: var(--muted); white-space: nowrap; }
+
+    .sidebar { padding: 0; }
+    .top-list { padding: 0; }
+    .top-list .section-title {
+      padding: 10px 16px; font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .05em;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .top-list li {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 16px;
+      border-bottom: 1px solid var(--border);
+      list-style: none;
+    }
+    .top-list li .name { font-family: monospace; font-size: 12px; }
+    .top-list li .count {
+      font-size: 11px; font-weight: 600;
+      background: var(--bg); border-radius: 3px;
+      padding: 1px 6px; color: var(--danger);
+    }
+
+    .error-msg {
+      padding: 24px; color: var(--danger); font-size: 13px;
+      text-align: center;
+    }
+
+    #loading { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="status-dot" id="status-dot"></div>
+  <h1>SSHWatch</h1>
+  <span class="version" id="version-badge"></span>
+  <div class="spacer"></div>
+  <select id="window-select" onchange="loadAll()">
+    <option value="1h">Last 1h</option>
+    <option value="6h">Last 6h</option>
+    <option value="24h" selected>Last 24h</option>
+    <option value="7d">Last 7d</option>
+    <option value="30d">Last 30d</option>
+    <option value="all">All time</option>
+  </select>
+</header>
+
+<div class="stats-grid" id="stats-grid">
+  <div class="stat-card"><div class="label">Total Attempts</div><div class="value danger" id="stat-total">—</div></div>
+  <div class="stat-card"><div class="label">Unique IPs</div><div class="value accent" id="stat-ips">—</div></div>
+  <div class="stat-card"><div class="label">Failed</div><div class="value danger" id="stat-failed">—</div></div>
+  <div class="stat-card"><div class="label">Accepted</div><div class="value success" id="stat-accepted">—</div></div>
+  <div class="stat-card"><div class="label">Currently Banned</div><div class="value warn" id="stat-banned">—</div></div>
+</div>
+
+<div class="main">
+  <div class="events-panel">
+    <div class="panel-header">
+      <h2>Recent Events</h2>
+      <span id="event-count" style="color:var(--muted);font-size:11px;"></span>
+    </div>
+    <div id="events-container"><div id="loading">Loading…</div></div>
+  </div>
+
+  <div class="sidebar">
+    <ul class="top-list" id="top-ips">
+      <li class="section-title">Top Attacker IPs</li>
+    </ul>
+    <ul class="top-list" id="top-usernames">
+      <li class="section-title">Top Usernames</li>
+    </ul>
+    <ul class="top-list" id="top-countries">
+      <li class="section-title">Top Countries</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  const fmt = (n) => n?.toLocaleString() ?? '—';
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function badgeClass(type) {
+    if (!type) return 'badge-other';
+    if (type === 'accepted') return 'badge-accepted';
+    if (type === 'ban') return 'badge-ban';
+    if (type === 'unban') return 'badge-unban';
+    return 'badge-failed';
+  }
+
+  function fmtTS(unix) {
+    const d = new Date(unix * 1000);
+    return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) +
+      ' ' + d.toLocaleDateString([], {month:'short',day:'numeric'});
+  }
+
+  async function loadStats() {
+    const w = document.getElementById('window-select').value;
+    try {
+      const r = await fetch('/api/stats?window=' + w);
+      const d = await r.json();
+      document.getElementById('stat-total').textContent   = fmt(d.total_attempts);
+      document.getElementById('stat-ips').textContent     = fmt(d.unique_ips);
+      document.getElementById('stat-failed').textContent  = fmt(d.failed);
+      document.getElementById('stat-accepted').textContent= fmt(d.accepted);
+      document.getElementById('stat-banned').textContent  = fmt(d.currently_banned);
+
+      // Top IPs
+      const ipList = document.getElementById('top-ips');
+      ipList.innerHTML = '<li class="section-title">Top Attacker IPs</li>';
+      (d.top_ips || []).forEach(t => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="name ip">${esc(t.ip)}</span><span class="count">${fmt(t.count)}</span>`;
+        ipList.appendChild(li);
+      });
+
+      // Top usernames
+      const uList = document.getElementById('top-usernames');
+      uList.innerHTML = '<li class="section-title">Top Usernames</li>';
+      (d.top_usernames || []).forEach(t => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="name user">${esc(t.username)}</span><span class="count">${fmt(t.count)}</span>`;
+        uList.appendChild(li);
+      });
+
+      // Top countries
+      const cList = document.getElementById('top-countries');
+      cList.innerHTML = '<li class="section-title">Top Countries</li>';
+      (d.top_countries || []).forEach(t => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="name">${esc(t.country || '—')}</span><span class="count">${fmt(t.count)}</span>`;
+        cList.appendChild(li);
+      });
+    } catch (e) {
+      console.error('stats error', e);
+    }
+  }
+
+  async function loadEvents() {
+    const w = document.getElementById('window-select').value;
+    let since = '';
+    const nowSec = Math.floor(Date.now() / 1000);
+    const windowSecs = { '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
+    if (windowSecs[w]) since = '&since=' + (nowSec - windowSecs[w]);
+
+    try {
+      const r = await fetch('/api/events?limit=200' + since);
+      const d = await r.json();
+      const events = d.events || [];
+      document.getElementById('event-count').textContent = d.total ? `${fmt(d.total)} total` : '';
+
+      if (events.length === 0) {
+        document.getElementById('events-container').innerHTML = '<div id="loading" style="color:var(--muted)">No events in this window.</div>';
+        return;
+      }
+
+      const html = `<table>
+        <thead><tr>
+          <th>Time</th><th>Type</th><th>IP</th><th>User</th><th>Port</th><th>Source</th>
+        </tr></thead>
+        <tbody>${events.map(e => `<tr>
+          <td class="ts">${fmtTS(e.ts)}</td>
+          <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
+          <td class="ip">${esc(e.ip)}</td>
+          <td class="user">${esc(e.username || '')}</td>
+          <td>${e.port || ''}</td>
+          <td>${esc(e.source)}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+      document.getElementById('events-container').innerHTML = html;
+    } catch (e) {
+      document.getElementById('events-container').innerHTML = `<div class="error-msg">Error loading events: ${esc(String(e))}</div>`;
+    }
+  }
+
+  async function loadHealth() {
+    try {
+      const r = await fetch('/api/health');
+      const d = await r.json();
+      document.getElementById('version-badge').textContent = 'v' + (d.version || '?');
+      document.getElementById('status-dot').style.background = 'var(--success)';
+    } catch {
+      document.getElementById('status-dot').style.background = 'var(--danger)';
+    }
+  }
+
+  function loadAll() {
+    loadStats();
+    loadEvents();
+  }
+
+  // Initial load + periodic refresh.
+  loadHealth();
+  loadAll();
+  setInterval(loadAll, 10000);
+  setInterval(loadHealth, 30000);
+</script>
+</body>
+</html>
