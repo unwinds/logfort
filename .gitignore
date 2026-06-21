@@ -1,0 +1,22 @@
+# Build artifacts
+/sshwatch
+/dist/
+
+# Data directory (SQLite DB, GeoIP DB)
+data/
+*.db
+*.mmdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Node / frontend build
+node_modules/
+web/dist/*.js
+web/dist/*.css
+web/dist/assets/
