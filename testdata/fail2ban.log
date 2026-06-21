@@ -1,0 +1,5 @@
+2026-06-21 14:40:00,123 fail2ban.actions [12345]: NOTICE  [sshd] Ban 203.0.113.5
+2026-06-21 14:41:00,456 fail2ban.actions [12345]: NOTICE  [sshd] Ban 198.51.100.7
+2026-06-21 14:55:00,789 fail2ban.actions [12345]: NOTICE  [sshd] Unban 203.0.113.5
+2026-06-21 15:00:00,000 fail2ban.actions [12345]: NOTICE  [sshd] Ban 203.0.113.9
+2026-06-21 16:00:00,000 fail2ban.filter  [12345]: INFO    [sshd] Found 198.51.100.7

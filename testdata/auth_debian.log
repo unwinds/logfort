@@ -1,0 +1,14 @@
+Jun 21 14:32:01 myhost sshd[12345]: Failed password for invalid user admin from 203.0.113.5 port 54321 ssh2
+Jun 21 14:32:03 myhost sshd[12346]: Failed password for root from 198.51.100.7 port 41234 ssh2
+Jun 21 14:32:05 myhost sshd[12347]: Invalid user oracle from 203.0.113.9 port 40000
+Jun 21 14:32:10 myhost sshd[12348]: Accepted publickey for bob from 192.0.2.11 port 22001 ssh2
+Jun 21 14:32:15 myhost sshd[12349]: Accepted password for alice from 192.0.2.22 port 43210 ssh2
+Jun 21 14:33:00 myhost sshd[12350]: error: maximum authentication attempts exceeded for root from 203.0.113.5 port 12345 ssh2 [preauth]
+Jun 21 14:33:05 myhost sshd[12351]: Connection closed by authenticating user root 203.0.113.5 port 12346 [preauth]
+Jun 21 14:33:07 myhost sshd[12352]: Disconnected from invalid user oracle 198.51.100.9 port 55001 [preauth]
+Jun 21 14:33:10 myhost sshd[12353]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.20  user=root
+Jun 21 14:33:20 myhost sshd[12354]: Failed password for invalid user test from 203.0.113.5 port 54322 ssh2
+Jun 21 14:33:25 myhost sshd[12355]: Failed password for invalid user admin from 203.0.113.5 port 54323 ssh2
+Jun 21 14:33:30 myhost CRON[9999]: (root) CMD (some cron job)
+Jun 21 14:33:31 myhost kernel: some kernel message
+Jun 21 14:33:32 myhost sudo[1234]: alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt
