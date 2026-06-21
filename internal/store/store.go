@@ -13,8 +13,19 @@ type Store interface {
 	ListEvents(ctx context.Context, q EventQuery) ([]EventRow, int64, error)
 	GetStats(ctx context.Context, window string) (*Stats, error)
 	ListBans(ctx context.Context, activeOnly bool) ([]BanRow, error)
+	GetMapPoints(ctx context.Context, window string) ([]MapPoint, error)
 	DeleteOldEvents(ctx context.Context, retentionDays int) (int64, error)
 	Close() error
+}
+
+// MapPoint is a geo-aggregated attack point for the map view.
+type MapPoint struct {
+	IP       string  `json:"ip"`
+	Lat      float64 `json:"lat"`
+	Lon      float64 `json:"lon"`
+	Country  string  `json:"country,omitempty"`
+	Count    int64   `json:"count"`
+	LastSeen int64   `json:"last_seen"`
 }
 
 // EventQuery holds parameters for listing events.

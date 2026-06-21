@@ -388,6 +388,42 @@ func (s *SQLiteStore) ListBans(ctx context.Context, activeOnly bool) ([]BanRow, 
 	return bans, rows.Err()
 }
 
+// GetMapPoints returns geo-aggregated attack points for the map view.
+// Only events with known lat/lon are included.
+func (s *SQLiteStore) GetMapPoints(ctx context.Context, window string) ([]MapPoint, error) {
+	since, _, err := windowToSince(window)
+	if err != nil {
+		return nil, err
+	}
+
+	args := []any{}
+	where := " WHERE lat IS NOT NULL AND lon IS NOT NULL AND event_type NOT IN ('ban','unban')"
+	if since > 0 {
+		where += " AND ts >= ?"
+		args = append(args, since)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT ip, AVG(lat), AVG(lon), MAX(country), COUNT(*), MAX(ts) FROM events"+
+			where+" GROUP BY ip ORDER BY COUNT(*) DESC LIMIT 500", args...)
+	if err != nil {
+		return nil, fmt.Errorf("map points: %w", err)
+	}
+	defer rows.Close()
+
+	var points []MapPoint
+	for rows.Next() {
+		var p MapPoint
+		var country sql.NullString
+		if err := rows.Scan(&p.IP, &p.Lat, &p.Lon, &country, &p.Count, &p.LastSeen); err != nil {
+			return nil, err
+		}
+		p.Country = country.String
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
 // DeleteOldEvents removes events older than retentionDays.
 func (s *SQLiteStore) DeleteOldEvents(ctx context.Context, retentionDays int) (int64, error) {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays).Unix()

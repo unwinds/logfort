@@ -12,6 +12,7 @@ import (
 
 	"github.com/unwinds/sshwatch/internal/api"
 	"github.com/unwinds/sshwatch/internal/config"
+	"github.com/unwinds/sshwatch/internal/geo"
 	"github.com/unwinds/sshwatch/internal/ingest"
 	"github.com/unwinds/sshwatch/internal/parse"
 	"github.com/unwinds/sshwatch/internal/store"
@@ -55,7 +56,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Open GeoIP database (optional — graceful fallback to noop).
+	var looker geo.Looker = geo.NoopLooker{}
+	if cfg.GeoIPDB != "" {
+		geoDB, err := geo.Open(cfg.GeoIPDB)
+		if err != nil {
+			slog.Warn("GeoIP database unavailable, geo fields will be empty",
+				"path", cfg.GeoIPDB, "err", err)
+		} else {
+			defer geoDB.Close()
+			looker = geoDB
+			slog.Info("GeoIP database loaded", "path", cfg.GeoIPDB)
+		}
+	}
+
 	pipeline := ingest.NewPipeline(sources, parse.ParseLine, st)
+	pipeline.SetGeo(looker)
 
 	srv := api.New(cfg, st, version)
 	srv.SetCounterFunc(pipeline.Counters)

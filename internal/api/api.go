@@ -155,9 +155,21 @@ func (s *Server) handleBans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"bans": bans})
 }
 
-func (s *Server) handleMap(w http.ResponseWriter, _ *http.Request) {
-	// Stub — implemented in v0.4.
-	writeJSON(w, http.StatusOK, map[string]any{"points": []any{}})
+func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "24h"
+	}
+	points, err := s.store.GetMapPoints(r.Context(), window)
+	if err != nil {
+		slog.Error("map points", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if points == nil {
+		points = []store.MapPoint{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"points": points})
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {

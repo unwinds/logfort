@@ -7,17 +7,19 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/unwinds/sshwatch/internal/geo"
 	"github.com/unwinds/sshwatch/internal/parse"
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
 // Pipeline connects one or more Sources to the store via a parse worker pool.
 type Pipeline struct {
-	sources  []Source
+	sources   []Source
 	parseFunc func(string) (*parse.Event, error)
-	store    store.Store
-	workers  int
-	publish  func(*parse.Event) // optional SSE hook (nil = no-op)
+	store     store.Store
+	geo       geo.Looker
+	workers   int
+	publish   func(*parse.Event) // optional SSE hook (nil = no-op)
 
 	parsed   atomic.Int64
 	unparsed atomic.Int64
@@ -33,11 +35,13 @@ func NewPipeline(sources []Source, parseFunc func(string) (*parse.Event, error),
 	}
 }
 
+// SetGeo wires a GeoIP looker into the pipeline.
+// If not set, geo fields are left empty.
+func (p *Pipeline) SetGeo(g geo.Looker) { p.geo = g }
+
 // SetPublishHook sets a function called for every successfully parsed event.
 // Used by the SSE hub (v0.3+).
-func (p *Pipeline) SetPublishHook(fn func(*parse.Event)) {
-	p.publish = fn
-}
+func (p *Pipeline) SetPublishHook(fn func(*parse.Event)) { p.publish = fn }
 
 // Counters returns the total parsed and unparsed (no-match) line counts.
 func (p *Pipeline) Counters() (parsed, unparsed int64) {
@@ -83,6 +87,14 @@ func (p *Pipeline) Run(ctx context.Context) error {
 					continue
 				}
 				p.parsed.Add(1)
+				if p.geo != nil && ev.IP != "" {
+					info := p.geo.Lookup(ev.IP)
+					ev.Geo.Country = info.Country
+					ev.Geo.City = info.City
+					ev.Geo.Lat = info.Lat
+					ev.Geo.Lon = info.Lon
+					ev.Geo.ASN = info.ASN
+				}
 				if err := p.store.InsertEvent(ctx, ev); err != nil && !errors.Is(err, context.Canceled) {
 					slog.Error("store event", "err", err)
 				}
