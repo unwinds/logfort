@@ -1,0 +1,15 @@
+services:
+  sshwatch:
+    image: ghcr.io/sshwatch/sshwatch:latest
+    container_name: sshwatch
+    ports:
+      - "127.0.0.1:8080:8080"   # localhost only — do NOT expose to the internet
+    volumes:
+      - /var/log/auth.log:/host/auth.log:ro
+      - ./data:/data
+    environment:
+      - SSHWATCH_LOG_PATHS=/host/auth.log
+      - SSHWATCH_GEOIP_DB=/data/geo.mmdb    # optional; download separately (see README)
+      # - SSHWATCH_HOME_LAT=52.37
+      # - SSHWATCH_HOME_LON=4.90
+    restart: unless-stopped
