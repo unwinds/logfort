@@ -1,6 +1,6 @@
 services:
   sshwatch:
-    image: ghcr.io/sshwatch/sshwatch:latest
+    image: ghcr.io/unwinds/sshwatch:latest
     container_name: sshwatch
     ports:
       - "127.0.0.1:8080:8080"   # localhost only — do NOT expose to the internet
