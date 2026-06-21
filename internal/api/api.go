@@ -10,6 +10,7 @@ import (
 
 	webui "github.com/unwinds/sshwatch/web"
 	"github.com/unwinds/sshwatch/internal/config"
+	"github.com/unwinds/sshwatch/internal/parse"
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
@@ -18,11 +19,11 @@ type Server struct {
 	cfg     *config.Config
 	store   store.Store
 	mux     *http.ServeMux
+	hub     *Hub
 	version string
 	startTS time.Time
 
-	// parsed/unparsed counters supplied by the pipeline (v0.3+).
-	parsedFn   func() (int64, int64)
+	parsedFn func() (int64, int64)
 }
 
 // New creates and configures the HTTP server.
@@ -33,10 +34,46 @@ func New(cfg *config.Config, st store.Store, version string) *Server {
 		version: version,
 		startTS: time.Now(),
 		mux:     http.NewServeMux(),
+		hub:     newHub(),
 	}
 	s.routes()
 	return s
 }
+
+// PublishEvent serialises a parsed event and broadcasts it to all SSE subscribers.
+// Safe to call from multiple goroutines.
+func (s *Server) PublishEvent(ev *parse.Event) {
+	var lat, lon *float64
+	if ev.Geo.Lat != 0 || ev.Geo.Lon != 0 {
+		lat, lon = &ev.Geo.Lat, &ev.Geo.Lon
+	}
+	payload := map[string]any{
+		"ts":          ev.TS.Unix(),
+		"ip":          ev.IP,
+		"event_type":  ev.EventType,
+		"username":    ev.Username,
+		"user_valid":  ev.UserValid,
+		"auth_method": ev.AuthMethod,
+		"port":        ev.Port,
+		"source":      ev.Source,
+		"country":     ev.Geo.Country,
+		"city":        ev.Geo.City,
+		"lat":         lat,
+		"lon":         lon,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	msg := make([]byte, 0, len(data)+8)
+	msg = append(msg, "data: "...)
+	msg = append(msg, data...)
+	msg = append(msg, '\n', '\n')
+	s.hub.publish(msg)
+}
+
+// Close shuts down the SSE hub. Call after the HTTP server has stopped.
+func (s *Server) Close() { s.hub.close() }
 
 // SetCounterFunc wires the pipeline's parsed/unparsed counters into /api/health.
 func (s *Server) SetCounterFunc(fn func() (int64, int64)) {
@@ -173,22 +210,34 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	// Stub — SSE implemented in v0.3.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	// Heartbeat loop until client disconnects (full SSE hub in v0.3).
+
+	ch := s.hub.subscribe()
+	defer s.hub.unsubscribe(ch)
+
+	_, _ = w.Write([]byte(": connected\n\n"))
+	flusher.Flush()
+
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			_, _ = w.Write(msg)
+			flusher.Flush()
 		case <-ticker.C:
 			_, _ = w.Write([]byte(": ping\n\n"))
 			flusher.Flush()

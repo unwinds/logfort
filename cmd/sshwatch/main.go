@@ -18,7 +18,7 @@ import (
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
-const version = "0.1.0"
+const version = "0.3.0"
 
 func main() {
 	cfg, err := config.Load()
@@ -75,6 +75,7 @@ func main() {
 
 	srv := api.New(cfg, st, version)
 	srv.SetCounterFunc(pipeline.Counters)
+	pipeline.SetPublishHook(srv.PublishEvent)
 
 	httpSrv := &http.Server{
 		Addr:         cfg.Listen,
@@ -115,6 +116,7 @@ func main() {
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
 		slog.Error("http shutdown", "err", err)
 	}
+	srv.Close()
 }
 
 func runRetention(ctx context.Context, st store.Store, days int) {

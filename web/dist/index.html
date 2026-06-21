@@ -104,6 +104,14 @@
 
     #loading { display: flex; align-items: center; justify-content: center; height: 120px; color: var(--muted); }
     .error-msg { padding: 24px; color: var(--danger); font-size: 13px; text-align: center; }
+
+    .live-badge {
+      font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 3px;
+      background: rgba(74,222,128,.15); color: var(--success); letter-spacing: .04em;
+    }
+    .live-badge.offline { background: rgba(248,113,113,.15); color: var(--danger); }
+    @keyframes fadeIn { from { opacity: 0; background: rgba(56,189,248,.06); } to { opacity: 1; background: transparent; } }
+    tr.live-row td { animation: fadeIn .5s ease; }
   </style>
 </head>
 <body>
@@ -140,7 +148,8 @@
   <div class="events-panel">
     <div class="panel-header">
       <h2>Recent Events</h2>
-      <span id="event-count" style="color:var(--muted);font-size:11px;"></span>
+      <span id="live-badge" class="live-badge offline">LIVE</span>
+      <span id="event-count" style="color:var(--muted);font-size:11px;margin-left:auto;"></span>
     </div>
     <div id="events-container"><div id="loading">Loading…</div></div>
   </div>
@@ -283,14 +292,53 @@
 
   function loadAll() { loadStats(); loadEvents(); }
 
+  // ── SSE Live Feed ───────────────────────────────────────────────────────
+  function eventRow(ev, cssClass) {
+    return `<tr class="${cssClass || ''}">
+      <td class="ts">${fmtTS(ev.ts)}</td>
+      <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
+      <td class="ip">${esc(ev.ip)}</td>
+      <td class="country">${esc(ev.country || '')}</td>
+      <td class="user">${esc(ev.username || '')}</td>
+      <td>${ev.port || ''}</td>
+      <td>${esc(ev.source)}</td>
+    </tr>`;
+  }
+
+  function prependLiveEvent(ev) {
+    const tbody = document.querySelector('#events-container tbody');
+    if (!tbody) return; // table not rendered yet (initial load pending)
+    const row = document.createElement('tr');
+    row.className = 'live-row';
+    row.innerHTML = `
+      <td class="ts">${fmtTS(ev.ts)}</td>
+      <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
+      <td class="ip">${esc(ev.ip)}</td>
+      <td class="country">${esc(ev.country || '')}</td>
+      <td class="user">${esc(ev.username || '')}</td>
+      <td>${ev.port || ''}</td>
+      <td>${esc(ev.source)}</td>`;
+    tbody.insertBefore(row, tbody.firstChild);
+    while (tbody.rows.length > 200) tbody.deleteRow(tbody.rows.length - 1);
+  }
+
+  function connectSSE() {
+    const badge = document.getElementById('live-badge');
+    const es = new EventSource('/api/stream');
+
+    es.onopen = () => { badge.className = 'live-badge'; };
+    es.onerror = () => { badge.className = 'live-badge offline'; };
+    es.onmessage = e => {
+      try { prependLiveEvent(JSON.parse(e.data)); } catch {}
+    };
+  }
+
   loadHealth();
   loadAll();
-  setInterval(loadAll, 10000);
+  connectSSE();
+  setInterval(loadAll, 30000);
   setInterval(loadHealth, 30000);
-  window.addEventListener('resize', () => {
-    // Redraw chart on resize — reuse last data via re-fetch.
-    loadStats();
-  });
+  window.addEventListener('resize', loadStats);
 </script>
 </body>
 </html>
