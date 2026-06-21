@@ -19,112 +19,91 @@
       --warn:    #fbbf24;
     }
 
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      font-size: 14px;
-      min-height: 100vh;
-    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
 
     header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+      display: flex; align-items: center; gap: 12px;
       padding: 14px 24px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: var(--surface); border-bottom: 1px solid var(--border);
     }
     header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
     header .version { font-size: 11px; color: var(--muted); }
-    header .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
-    header .spacer { flex: 1; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+    .spacer { flex: 1; }
     header select {
       background: var(--bg); border: 1px solid var(--border); color: var(--text);
       padding: 4px 8px; border-radius: 4px; font-size: 13px; cursor: pointer;
     }
 
     .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      border-bottom: 1px solid var(--border);
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1px; background: var(--border); border-bottom: 1px solid var(--border);
     }
-    .stat-card {
-      background: var(--surface);
-      padding: 16px 20px;
-    }
+    .stat-card { background: var(--surface); padding: 16px 20px; }
     .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
     .stat-card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
-    .stat-card .value.danger  { color: var(--danger); }
-    .stat-card .value.success { color: var(--success); }
-    .stat-card .value.warn    { color: var(--warn); }
-    .stat-card .value.accent  { color: var(--accent); }
+    .value.danger  { color: var(--danger); }
+    .value.success { color: var(--success); }
+    .value.warn    { color: var(--warn); }
+    .value.accent  { color: var(--accent); }
 
-    .main { display: grid; grid-template-columns: 1fr 280px; gap: 0; }
+    /* Timeline chart */
+    .chart-wrap {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 20px 8px;
+    }
+    .chart-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    canvas#timeline { width: 100%; height: 64px; display: block; }
 
-    .events-panel { border-right: 1px solid var(--border); }
+    .main { display: grid; grid-template-columns: 1fr 260px; }
+
+    .events-panel { border-right: 1px solid var(--border); overflow: auto; max-height: calc(100vh - 280px); }
     .panel-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
+      background: var(--surface); position: sticky; top: 0; z-index: 2;
     }
     .panel-header h2 { font-size: 13px; font-weight: 600; }
 
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th {
-      text-align: left; padding: 8px 12px;
+      text-align: left; padding: 8px 10px;
       background: var(--surface); color: var(--muted);
       font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-      position: sticky; top: 0; z-index: 1;
-      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--border);
     }
-    td { padding: 7px 12px; border-bottom: 1px solid var(--border); }
+    td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
     tr:hover td { background: rgba(255,255,255,.03); }
 
-    .badge {
-      display: inline-block; padding: 2px 6px; border-radius: 3px;
-      font-size: 10px; font-weight: 600; text-transform: uppercase;
-    }
-    .badge-failed    { background: rgba(248,113,113,.15); color: var(--danger); }
-    .badge-accepted  { background: rgba(74,222,128,.15);  color: var(--success); }
-    .badge-ban       { background: rgba(251,191,36,.15);  color: var(--warn); }
-    .badge-unban     { background: rgba(100,116,139,.15); color: var(--muted); }
-    .badge-other     { background: rgba(56,189,248,.15);  color: var(--accent); }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+    .badge-failed   { background: rgba(248,113,113,.15); color: var(--danger); }
+    .badge-accepted { background: rgba(74,222,128,.15);  color: var(--success); }
+    .badge-ban      { background: rgba(251,191,36,.15);  color: var(--warn); }
+    .badge-unban    { background: rgba(100,116,139,.15); color: var(--muted); }
+    .badge-other    { background: rgba(56,189,248,.15);  color: var(--accent); }
 
-    .ip { font-family: monospace; color: var(--accent); }
+    .ip   { font-family: monospace; color: var(--accent); }
     .user { font-family: monospace; }
-    .ts { color: var(--muted); white-space: nowrap; }
+    .ts   { color: var(--muted); white-space: nowrap; font-size: 11px; }
+    .country { font-size: 11px; color: var(--muted); }
 
-    .sidebar { padding: 0; }
+    .sidebar { overflow: auto; max-height: calc(100vh - 280px); }
     .top-list { padding: 0; }
-    .top-list .section-title {
-      padding: 10px 16px; font-size: 11px; color: var(--muted);
+    .section-title {
+      padding: 10px 14px; font-size: 11px; color: var(--muted);
       text-transform: uppercase; letter-spacing: .05em;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      border-bottom: 1px solid var(--border); background: var(--surface);
+      list-style: none;
     }
     .top-list li {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 7px 16px;
-      border-bottom: 1px solid var(--border);
-      list-style: none;
+      padding: 6px 14px; border-bottom: 1px solid var(--border); list-style: none;
     }
-    .top-list li .name { font-family: monospace; font-size: 12px; }
-    .top-list li .count {
-      font-size: 11px; font-weight: 600;
-      background: var(--bg); border-radius: 3px;
-      padding: 1px 6px; color: var(--danger);
-    }
+    .top-list li .name { font-family: monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+    .top-list li .count { font-size: 11px; font-weight: 600; background: var(--bg); border-radius: 3px; padding: 1px 6px; color: var(--danger); flex-shrink: 0; }
 
-    .error-msg {
-      padding: 24px; color: var(--danger); font-size: 13px;
-      text-align: center;
-    }
-
-    #loading { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--muted); }
+    #loading { display: flex; align-items: center; justify-content: center; height: 120px; color: var(--muted); }
+    .error-msg { padding: 24px; color: var(--danger); font-size: 13px; text-align: center; }
   </style>
 </head>
 <body>
@@ -144,12 +123,17 @@
   </select>
 </header>
 
-<div class="stats-grid" id="stats-grid">
-  <div class="stat-card"><div class="label">Total Attempts</div><div class="value danger" id="stat-total">—</div></div>
-  <div class="stat-card"><div class="label">Unique IPs</div><div class="value accent" id="stat-ips">—</div></div>
-  <div class="stat-card"><div class="label">Failed</div><div class="value danger" id="stat-failed">—</div></div>
+<div class="stats-grid">
+  <div class="stat-card"><div class="label">Total Attempts</div><div class="value danger"  id="stat-total">—</div></div>
+  <div class="stat-card"><div class="label">Unique IPs</div><div class="value accent"  id="stat-ips">—</div></div>
+  <div class="stat-card"><div class="label">Failed</div><div class="value danger"  id="stat-failed">—</div></div>
   <div class="stat-card"><div class="label">Accepted</div><div class="value success" id="stat-accepted">—</div></div>
-  <div class="stat-card"><div class="label">Currently Banned</div><div class="value warn" id="stat-banned">—</div></div>
+  <div class="stat-card"><div class="label">Currently Banned</div><div class="value warn"    id="stat-banned">—</div></div>
+</div>
+
+<div class="chart-wrap">
+  <div class="chart-label">Attempts over time</div>
+  <canvas id="timeline"></canvas>
 </div>
 
 <div class="main">
@@ -162,136 +146,151 @@
   </div>
 
   <div class="sidebar">
-    <ul class="top-list" id="top-ips">
-      <li class="section-title">Top Attacker IPs</li>
-    </ul>
-    <ul class="top-list" id="top-usernames">
-      <li class="section-title">Top Usernames</li>
-    </ul>
-    <ul class="top-list" id="top-countries">
-      <li class="section-title">Top Countries</li>
-    </ul>
+    <ul class="top-list" id="top-ips"><li class="section-title">Top Attacker IPs</li></ul>
+    <ul class="top-list" id="top-usernames"><li class="section-title">Top Usernames</li></ul>
+    <ul class="top-list" id="top-countries"><li class="section-title">Top Countries</li></ul>
   </div>
 </div>
 
 <script>
-  const fmt = (n) => n?.toLocaleString() ?? '—';
-  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt = n => n?.toLocaleString() ?? '—';
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  function badgeClass(type) {
-    if (!type) return 'badge-other';
-    if (type === 'accepted') return 'badge-accepted';
-    if (type === 'ban') return 'badge-ban';
-    if (type === 'unban') return 'badge-unban';
-    return 'badge-failed';
+  function badgeClass(t) {
+    if (t === 'accepted') return 'badge-accepted';
+    if (t === 'ban')      return 'badge-ban';
+    if (t === 'unban')    return 'badge-unban';
+    return t ? 'badge-failed' : 'badge-other';
   }
 
   function fmtTS(unix) {
     const d = new Date(unix * 1000);
-    return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) +
-      ' ' + d.toLocaleDateString([], {month:'short',day:'numeric'});
+    return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})
+      + ' ' + d.toLocaleDateString([], {month:'short', day:'numeric'});
   }
 
+  // ── Timeline bar chart ──────────────────────────────────────────────────
+  function drawTimeline(buckets) {
+    const canvas = document.getElementById('timeline');
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.offsetWidth, H = 64;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    if (!buckets || buckets.length === 0) {
+      ctx.fillStyle = 'var(--muted)';
+      ctx.font = '11px system-ui';
+      ctx.fillText('No data', 8, H / 2 + 4);
+      return;
+    }
+
+    const max = Math.max(...buckets.map(b => b.count), 1);
+    const gap = 2;
+    const barW = Math.max(2, Math.floor((W - gap * buckets.length) / buckets.length));
+    const totalW = (barW + gap) * buckets.length;
+    const offsetX = Math.max(0, (W - totalW) / 2);
+
+    buckets.forEach((b, i) => {
+      const barH = Math.max(2, Math.round((b.count / max) * (H - 4)));
+      const x = offsetX + i * (barW + gap);
+      const y = H - barH;
+      ctx.fillStyle = b.count > 0 ? '#f87171' : '#2a2d3a';
+      ctx.beginPath();
+      ctx.roundRect(x, y, barW, barH, 2);
+      ctx.fill();
+    });
+  }
+
+  // ── Stats + sidebar ─────────────────────────────────────────────────────
   async function loadStats() {
     const w = document.getElementById('window-select').value;
     try {
-      const r = await fetch('/api/stats?window=' + w);
-      const d = await r.json();
-      document.getElementById('stat-total').textContent   = fmt(d.total_attempts);
-      document.getElementById('stat-ips').textContent     = fmt(d.unique_ips);
-      document.getElementById('stat-failed').textContent  = fmt(d.failed);
-      document.getElementById('stat-accepted').textContent= fmt(d.accepted);
-      document.getElementById('stat-banned').textContent  = fmt(d.currently_banned);
+      const d = await fetch('/api/stats?window=' + w).then(r => r.json());
+      document.getElementById('stat-total').textContent    = fmt(d.total_attempts);
+      document.getElementById('stat-ips').textContent      = fmt(d.unique_ips);
+      document.getElementById('stat-failed').textContent   = fmt(d.failed);
+      document.getElementById('stat-accepted').textContent = fmt(d.accepted);
+      document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
 
-      // Top IPs
-      const ipList = document.getElementById('top-ips');
-      ipList.innerHTML = '<li class="section-title">Top Attacker IPs</li>';
-      (d.top_ips || []).forEach(t => {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="name ip">${esc(t.ip)}</span><span class="count">${fmt(t.count)}</span>`;
-        ipList.appendChild(li);
-      });
+      drawTimeline(d.timeline);
 
-      // Top usernames
-      const uList = document.getElementById('top-usernames');
-      uList.innerHTML = '<li class="section-title">Top Usernames</li>';
-      (d.top_usernames || []).forEach(t => {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="name user">${esc(t.username)}</span><span class="count">${fmt(t.count)}</span>`;
-        uList.appendChild(li);
-      });
-
-      // Top countries
-      const cList = document.getElementById('top-countries');
-      cList.innerHTML = '<li class="section-title">Top Countries</li>';
-      (d.top_countries || []).forEach(t => {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="name">${esc(t.country || '—')}</span><span class="count">${fmt(t.count)}</span>`;
-        cList.appendChild(li);
-      });
-    } catch (e) {
-      console.error('stats error', e);
-    }
+      renderTopList('top-ips', 'Top Attacker IPs', d.top_ips,
+        t => `<span class="name ip">${esc(t.ip)}</span>`, t => t.count);
+      renderTopList('top-usernames', 'Top Usernames', d.top_usernames,
+        t => `<span class="name user">${esc(t.username)}</span>`, t => t.count);
+      renderTopList('top-countries', 'Top Countries', d.top_countries,
+        t => `<span class="name">${esc(t.country || '—')}</span>`, t => t.count);
+    } catch (e) { console.error('stats', e); }
   }
 
+  function renderTopList(id, title, items, labelFn, countFn) {
+    const ul = document.getElementById(id);
+    ul.innerHTML = `<li class="section-title">${title}</li>`;
+    (items || []).forEach(t => {
+      const li = document.createElement('li');
+      li.innerHTML = labelFn(t) + `<span class="count">${fmt(countFn(t))}</span>`;
+      ul.appendChild(li);
+    });
+  }
+
+  // ── Events table ────────────────────────────────────────────────────────
   async function loadEvents() {
     const w = document.getElementById('window-select').value;
-    let since = '';
-    const nowSec = Math.floor(Date.now() / 1000);
     const windowSecs = { '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
-    if (windowSecs[w]) since = '&since=' + (nowSec - windowSecs[w]);
-
+    const since = windowSecs[w] ? '&since=' + (Math.floor(Date.now()/1000) - windowSecs[w]) : '';
     try {
-      const r = await fetch('/api/events?limit=200' + since);
-      const d = await r.json();
+      const d = await fetch('/api/events?limit=200' + since).then(r => r.json());
       const events = d.events || [];
       document.getElementById('event-count').textContent = d.total ? `${fmt(d.total)} total` : '';
 
-      if (events.length === 0) {
-        document.getElementById('events-container').innerHTML = '<div id="loading" style="color:var(--muted)">No events in this window.</div>';
+      if (!events.length) {
+        document.getElementById('events-container').innerHTML =
+          '<div id="loading" style="color:var(--muted)">No events in this window.</div>';
         return;
       }
 
-      const html = `<table>
+      const rows = events.map(e => `<tr>
+        <td class="ts">${fmtTS(e.ts)}</td>
+        <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
+        <td class="ip">${esc(e.ip)}</td>
+        <td class="country">${esc(e.country || '')}</td>
+        <td class="user">${esc(e.username || '')}</td>
+        <td>${e.port || ''}</td>
+        <td>${esc(e.source)}</td>
+      </tr>`).join('');
+
+      document.getElementById('events-container').innerHTML = `<table>
         <thead><tr>
-          <th>Time</th><th>Type</th><th>IP</th><th>User</th><th>Port</th><th>Source</th>
+          <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th>
         </tr></thead>
-        <tbody>${events.map(e => `<tr>
-          <td class="ts">${fmtTS(e.ts)}</td>
-          <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
-          <td class="ip">${esc(e.ip)}</td>
-          <td class="user">${esc(e.username || '')}</td>
-          <td>${e.port || ''}</td>
-          <td>${esc(e.source)}</td>
-        </tr>`).join('')}</tbody>
+        <tbody>${rows}</tbody>
       </table>`;
-      document.getElementById('events-container').innerHTML = html;
     } catch (e) {
-      document.getElementById('events-container').innerHTML = `<div class="error-msg">Error loading events: ${esc(String(e))}</div>`;
+      document.getElementById('events-container').innerHTML =
+        `<div class="error-msg">Error loading events: ${esc(String(e))}</div>`;
     }
   }
 
   async function loadHealth() {
     try {
-      const r = await fetch('/api/health');
-      const d = await r.json();
+      const d = await fetch('/api/health').then(r => r.json());
       document.getElementById('version-badge').textContent = 'v' + (d.version || '?');
       document.getElementById('status-dot').style.background = 'var(--success)';
-    } catch {
-      document.getElementById('status-dot').style.background = 'var(--danger)';
-    }
+    } catch { document.getElementById('status-dot').style.background = 'var(--danger)'; }
   }
 
-  function loadAll() {
-    loadStats();
-    loadEvents();
-  }
+  function loadAll() { loadStats(); loadEvents(); }
 
-  // Initial load + periodic refresh.
   loadHealth();
   loadAll();
   setInterval(loadAll, 10000);
   setInterval(loadHealth, 30000);
+  window.addEventListener('resize', () => {
+    // Redraw chart on resize — reuse last data via re-fetch.
+    loadStats();
+  });
 </script>
 </body>
 </html>
