@@ -19,6 +19,8 @@ type Store interface {
 	BanIP(ctx context.Context, ip, source, reason string) error
 	// UnbanIP marks all active bans for an IP as inactive.
 	UnbanIP(ctx context.Context, ip string) error
+	// CountIPEvents returns the number of non-ban/unban events from ip since the given time.
+	CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error)
 	Close() error
 }
 

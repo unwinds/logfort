@@ -462,6 +462,16 @@ func (s *SQLiteStore) UnbanIP(ctx context.Context, ip string) error {
 	return err
 }
 
+// CountIPEvents returns the number of non-ban/unban events from ip since the given time.
+func (s *SQLiteStore) CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type NOT IN ('ban','unban')",
+		ip, since.Unix(),
+	).Scan(&count)
+	return count, err
+}
+
 // Close closes the underlying database connection.
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
