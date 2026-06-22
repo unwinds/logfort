@@ -419,7 +419,7 @@
 
   // ── Ban / Unban ─────────────────────────────────────────────────────────
   async function banIP(ip, reason) {
-    if (!confirm(`Ban ${ip}?`)) return;
+    if (!confirm(`Ban ${ip}?`)) return false;
     try {
       const r = await fetch('/api/ban', {
         method: 'POST',
@@ -427,10 +427,11 @@
         body: JSON.stringify({ip, reason: reason || 'manual'}),
       });
       const d = await r.json();
-      if (!r.ok) { alert('Ban failed: ' + (d.error || r.status)); return; }
+      if (!r.ok) { alert('Ban failed: ' + (d.error || r.status)); return false; }
       loadBans();
       loadAll();
-    } catch (e) { alert('Ban error: ' + e); }
+      return true;
+    } catch (e) { alert('Ban error: ' + e); return false; }
   }
 
   async function unbanIP(ip) {
@@ -448,14 +449,15 @@
     } catch (e) { alert('Unban error: ' + e); }
   }
 
-  function banIPManual() {
+  async function banIPManual() {
     const ip = document.getElementById('ban-ip-input').value.trim();
     const reason = document.getElementById('ban-reason-input').value.trim();
     if (!ip) { alert('Enter an IP address'); return; }
-    banIP(ip, reason).then(() => {
+    const ok = await banIP(ip, reason);
+    if (ok) {
       document.getElementById('ban-ip-input').value = '';
       document.getElementById('ban-reason-input').value = '';
-    });
+    }
   }
 
   function loadAll() {

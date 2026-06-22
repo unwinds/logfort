@@ -27,6 +27,7 @@ type Config struct {
 	ResponderBackend string
 	NftTable      string
 	NftSet        string
+	Fail2BanJail  string
 	IgnoreIPs     []string
 	NotifyWebhookURL    string
 	NotifyTelegramToken string
@@ -47,6 +48,7 @@ func Load() (*Config, error) {
 		GeoIPDB:          getEnv("SSHWATCH_GEOIP_DB", "/data/geo.mmdb"),
 		NftTable:         getEnv("SSHWATCH_NFT_TABLE", "inet filter"),
 		NftSet:           getEnv("SSHWATCH_NFT_SET", "sshwatch_block"),
+		Fail2BanJail:     getEnv("SSHWATCH_FAIL2BAN_JAIL", "sshd"),
 		NotifyWebhookURL: getEnv("SSHWATCH_NOTIFY_WEBHOOK_URL", ""),
 		NotifyTelegramToken: getEnv("SSHWATCH_NOTIFY_TELEGRAM_TOKEN", ""),
 		NotifyTelegramChat:  getEnv("SSHWATCH_NOTIFY_TELEGRAM_CHAT_ID", ""),

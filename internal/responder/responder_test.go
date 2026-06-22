@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/unwinds/sshwatch/internal/config"
 	"github.com/unwinds/sshwatch/internal/responder"
 )
 
@@ -73,6 +74,21 @@ func TestIsValid(t *testing.T) {
 	}
 	if responder.IsValid("") {
 		t.Error("IsValid('') = true")
+	}
+}
+
+func TestNewWithBadAllowlistAndDisabledResponder(t *testing.T) {
+	// A bad IGNORE_IPS entry must not kill startup when responder is disabled.
+	cfg := &config.Config{
+		ResponderEnabled: false,
+		IgnoreIPs:        []string{"not-valid"},
+	}
+	r, al, err := responder.New(cfg)
+	if err != nil {
+		t.Fatalf("New() must not fail when responder is disabled: %v", err)
+	}
+	if r == nil || al == nil {
+		t.Error("want non-nil Responder and Allowlist")
 	}
 }
 

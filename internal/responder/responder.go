@@ -18,11 +18,17 @@ type Responder interface {
 }
 
 // New returns a Responder and parsed Allowlist from config.
-// If responder is disabled, returns NoopResponder.
+// If responder is disabled, returns NoopResponder. ParseAllowlist errors are
+// only fatal when the responder is enabled — a misconfigured IGNORE_IPS must
+// not break startup for users who never enable active banning.
 func New(cfg *config.Config) (Responder, *Allowlist, error) {
-	al, err := ParseAllowlist(cfg.IgnoreIPs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("allowlist: %w", err)
+	al, allowlistErr := ParseAllowlist(cfg.IgnoreIPs)
+	if allowlistErr != nil {
+		if cfg.ResponderEnabled {
+			return nil, nil, fmt.Errorf("allowlist: %w", allowlistErr)
+		}
+		// Allowlist is still used for API validation; fall back to empty.
+		al = &Allowlist{}
 	}
 	if !cfg.ResponderEnabled {
 		return NoopResponder{}, al, nil
@@ -35,7 +41,7 @@ func New(cfg *config.Config) (Responder, *Allowlist, error) {
 		}
 		return r, al, nil
 	case "fail2ban":
-		return newFail2BanResponder("sshd"), al, nil
+		return newFail2BanResponder(cfg.Fail2BanJail), al, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown responder backend %q; use nftables or fail2ban", cfg.ResponderBackend)
 	}

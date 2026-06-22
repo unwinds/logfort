@@ -154,12 +154,14 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 	}
 
 	// Mirror ban/unban events into the bans table.
+	// Use WHERE NOT EXISTS to skip insertion when an active ban for this IP
+	// already exists — prevents duplicate rows on log re-reads at restart.
 	if e.EventType == "ban" {
 		_, err = s.db.ExecContext(ctx, `
 			INSERT INTO bans(ip, jail, banned_at, active, source, reason)
-			VALUES(?,?,?,1,'fail2ban',?)
-			ON CONFLICT DO NOTHING`,
-			e.IP, nullStr(e.Username), e.TS.Unix(), nullStr(""),
+			SELECT ?,?,?,1,'fail2ban',?
+			WHERE NOT EXISTS (SELECT 1 FROM bans WHERE ip=? AND active=1)`,
+			e.IP, nullStr(e.Username), e.TS.Unix(), nullStr(""), e.IP,
 		)
 	} else if e.EventType == "unban" {
 		_, err = s.db.ExecContext(ctx, `
@@ -440,13 +442,13 @@ func (s *SQLiteStore) DeleteOldEvents(ctx context.Context, retentionDays int) (i
 	return res.RowsAffected()
 }
 
-// BanIP inserts a new ban record into the bans table.
+// BanIP inserts a new ban record, skipping if an active ban for this IP exists.
 func (s *SQLiteStore) BanIP(ctx context.Context, ip, source, reason string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO bans(ip, banned_at, active, source, reason)
-		VALUES(?, ?, 1, ?, ?)
-		ON CONFLICT DO NOTHING`,
-		ip, time.Now().Unix(), source, nullStr(reason),
+		SELECT ?, ?, 1, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM bans WHERE ip=? AND active=1)`,
+		ip, time.Now().Unix(), source, nullStr(reason), ip,
 	)
 	return err
 }

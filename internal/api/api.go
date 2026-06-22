@@ -29,20 +29,20 @@ type Server struct {
 	parsedFn  func() (int64, int64)
 	responder responder.Responder
 	allowlist *responder.Allowlist
-	writeLim  *rateLimiter
+	banLim    *rateLimiter // limits ban requests only; unban is not throttled
 }
 
 // New creates and configures the HTTP server.
 func New(cfg *config.Config, st store.Store, version string) *Server {
 	s := &Server{
-		cfg:      cfg,
-		store:    st,
-		version:  version,
-		startTS:  time.Now(),
-		mux:      http.NewServeMux(),
-		hub:      newHub(),
+		cfg:       cfg,
+		store:     st,
+		version:   version,
+		startTS:   time.Now(),
+		mux:       http.NewServeMux(),
+		hub:       newHub(),
 		responder: responder.NoopResponder{},
-		writeLim: newRateLimiter(10, 20), // 10 req/s burst 20
+		banLim:    newRateLimiter(10, 20), // 10 req/s burst 20; unban is never throttled
 	}
 	s.routes()
 	return s
@@ -265,7 +265,7 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "responder is disabled; set SSHWATCH_RESPONDER_ENABLED=true to enable")
 		return
 	}
-	if !s.writeLim.Allow() {
+	if !s.banLim.Allow() {
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return
 	}
@@ -285,9 +285,10 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid IP address")
 		return
 	}
-	// Anti-self-lockout: never ban the address making the request.
+	// Anti-self-lockout: normalize both IPs to handle IPv4-mapped IPv6
+	// (r.RemoteAddr may be "[::ffff:1.2.3.4]:PORT" when req.IP is "1.2.3.4").
 	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if remoteIP == req.IP {
+	if normalizeIP(remoteIP) == normalizeIP(req.IP) {
 		writeError(w, http.StatusBadRequest, "cannot ban your own IP address")
 		return
 	}
@@ -300,13 +301,19 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record in store first; roll back if the firewall operation fails.
+	if err := s.store.BanIP(r.Context(), req.IP, s.responder.Name(), req.Reason); err != nil {
+		slog.Error("store ban", "ip", req.IP, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to record ban")
+		return
+	}
 	if err := s.responder.Ban(r.Context(), req.IP); err != nil {
+		if rbErr := s.store.UnbanIP(r.Context(), req.IP); rbErr != nil {
+			slog.Error("rollback store after failed ban", "ip", req.IP, "err", rbErr)
+		}
 		slog.Error("ban failed", "ip", req.IP, "err", err)
 		writeError(w, http.StatusInternalServerError, "ban failed: "+err.Error())
 		return
-	}
-	if err := s.store.BanIP(r.Context(), req.IP, s.responder.Name(), req.Reason); err != nil {
-		slog.Error("store ban", "ip", req.IP, "err", err)
 	}
 	slog.Info("manual ban", "ip", req.IP, "reason", req.Reason, "remote", remoteIP, "backend", s.responder.Name())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "banned", "ip": req.IP})
@@ -317,10 +324,7 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "responder is disabled; set SSHWATCH_RESPONDER_ENABLED=true to enable")
 		return
 	}
-	if !s.writeLim.Allow() {
-		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
-		return
-	}
+	// Unban is not rate-limited: blocking emergency unbans would be dangerous.
 
 	var req struct {
 		IP string `json:"ip"`
@@ -343,6 +347,8 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.UnbanIP(r.Context(), req.IP); err != nil {
 		slog.Error("store unban", "ip", req.IP, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to record unban")
+		return
 	}
 	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 	slog.Info("manual unban", "ip", req.IP, "remote", remoteIP, "backend", s.responder.Name())
@@ -400,4 +406,18 @@ func (rl *rateLimiter) Allow() bool {
 	}
 	rl.tokens--
 	return true
+}
+
+// normalizeIP converts IPv4-mapped IPv6 addresses ("::ffff:1.2.3.4") to their
+// plain IPv4 form ("1.2.3.4") so string comparisons are reliable across
+// dual-stack connections.
+func normalizeIP(s string) string {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return s
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.String()
 }

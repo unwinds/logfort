@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -192,6 +193,33 @@ func TestHealth_ResponderField(t *testing.T) {
 	}
 	if resp["responder_backend"] != "mock" {
 		t.Errorf("responder_backend: %v", resp["responder_backend"])
+	}
+}
+
+func TestBanPost_IPv4MappedSelfLockout(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	b, _ := json.Marshal(map[string]string{"ip": "203.0.113.99"})
+	req := httptest.NewRequest(http.MethodPost, "/api/ban", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	// Simulate dual-stack connection: RemoteAddr is IPv4-mapped IPv6
+	req.RemoteAddr = "[::ffff:203.0.113.99]:12345"
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for IPv4-mapped self-lockout, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUnbanNotRateLimited(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	// Exhaust the ban rate limiter by banning many distinct IPs quickly.
+	for i := 0; i < 25; i++ {
+		postJSON(t, srv, "/api/ban", map[string]string{"ip": fmt.Sprintf("203.0.%d.%d", i/256, i%256)})
+	}
+	// Unban should never be throttled.
+	w := postJSON(t, srv, "/api/unban", map[string]string{"ip": "203.0.113.5"})
+	if w.Code == http.StatusTooManyRequests {
+		t.Error("unban must not be rate-limited, got 429")
 	}
 }
 
