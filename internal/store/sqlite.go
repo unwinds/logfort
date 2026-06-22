@@ -374,7 +374,7 @@ func (s *SQLiteStore) ListBans(ctx context.Context, activeOnly bool) ([]BanRow, 
 	}
 	defer rows.Close()
 
-	var bans []BanRow
+	bans := []BanRow{}
 	for rows.Next() {
 		var b BanRow
 		var jail, reason sql.NullString

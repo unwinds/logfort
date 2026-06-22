@@ -147,6 +147,24 @@
     .map-legend .dot { border-radius: 50%; background: #f87171; opacity: .8; flex-shrink: 0; }
     #map-empty { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
       color:var(--muted); font-size:13px; text-align:center; z-index:500; pointer-events:none; }
+
+    /* Bans panel */
+    #section-bans { display: none; }
+    .bans-toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .bans-toolbar h2 { font-size: 13px; font-weight: 600; }
+    .bans-toolbar label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; margin-left: auto; }
+    .bans-table-wrap { overflow: auto; max-height: calc(100vh - 280px); }
+    .ban-active   { color: var(--warn); }
+    .ban-inactive { color: var(--muted); }
+    .tab-badge {
+      display: inline-block; margin-left: 5px; padding: 0 5px;
+      border-radius: 10px; font-size: 10px; font-weight: 700;
+      background: rgba(251,191,36,.2); color: var(--warn); vertical-align: middle;
+    }
   </style>
 </head>
 <body>
@@ -182,6 +200,7 @@
 <div class="tab-bar">
   <button class="tab-btn active" id="tab-events" onclick="switchTab('events')">Events</button>
   <button class="tab-btn" id="tab-map" onclick="switchTab('map')">Attack Map</button>
+  <button class="tab-btn" id="tab-bans" onclick="switchTab('bans')">Bans<span class="tab-badge" id="bans-badge" style="display:none"></span></button>
 </div>
 
 <div id="section-events">
@@ -202,6 +221,20 @@
   </div>
 </div>
 </div><!-- /section-events -->
+
+<div id="section-bans">
+  <div class="bans-toolbar">
+    <h2>Banned IPs</h2>
+    <span id="bans-count" style="color:var(--muted);font-size:11px;"></span>
+    <label>
+      <input type="checkbox" id="bans-active-only" checked onchange="loadBans()">
+      Active only
+    </label>
+  </div>
+  <div class="bans-table-wrap">
+    <div id="bans-container"><div id="loading">Loading…</div></div>
+  </div>
+</div>
 
 <div id="section-map">
   <div style="position:relative;">
@@ -347,7 +380,26 @@
     } catch { document.getElementById('status-dot').style.background = 'var(--danger)'; }
   }
 
-  function loadAll() { loadStats(); loadEvents(); }
+  function loadAll() {
+    loadStats();
+    loadEvents();
+    // Always refresh bans badge even when not on bans tab.
+    loadBansBadge();
+  }
+
+  async function loadBansBadge() {
+    try {
+      const d = await fetch('/api/bans?active=true').then(r => r.json());
+      const count = (d.bans || []).length;
+      const badge = document.getElementById('bans-badge');
+      if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    } catch {}
+  }
 
   // ── SSE Live Feed ───────────────────────────────────────────────────────
   function eventRow(ev, cssClass) {
@@ -390,6 +442,68 @@
     };
   }
 
+  // ── Bans table ──────────────────────────────────────────────────────────
+  async function loadBans() {
+    const activeOnly = document.getElementById('bans-active-only').checked;
+    try {
+      const d = await fetch('/api/bans?active=' + (activeOnly ? 'true' : 'false')).then(r => r.json());
+      const bans = d.bans || [];
+
+      const badge = document.getElementById('bans-badge');
+      const activeBans = bans.filter(b => b.active);
+      if (activeBans.length > 0) {
+        badge.textContent = activeBans.length;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+
+      document.getElementById('bans-count').textContent = bans.length
+        ? `${fmt(bans.length)} record${bans.length === 1 ? '' : 's'}`
+        : '';
+
+      if (!bans.length) {
+        document.getElementById('bans-container').innerHTML =
+          '<div id="loading" style="color:var(--muted)">No ban records found.</div>';
+        return;
+      }
+
+      const rows = bans.map(b => {
+        const bannedAt = fmtTS(b.banned_at);
+        const duration = b.unbanned_at
+          ? fmtDuration(b.unbanned_at - b.banned_at)
+          : fmtDuration(Math.floor(Date.now() / 1000) - b.banned_at);
+        const statusCls = b.active ? 'ban-active' : 'ban-inactive';
+        const statusTxt = b.active ? 'ACTIVE' : 'EXPIRED';
+        return `<tr>
+          <td class="ip">${esc(b.ip)}</td>
+          <td>${esc(b.jail || '—')}</td>
+          <td class="ts">${bannedAt}</td>
+          <td style="color:var(--muted);font-size:11px;">${duration}</td>
+          <td><span class="badge ${b.active ? 'badge-ban' : 'badge-unban'} ${statusCls}">${statusTxt}</span></td>
+          <td style="color:var(--muted);font-size:11px;">${esc(b.source)}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('bans-container').innerHTML = `<table>
+        <thead><tr>
+          <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Status</th><th>Source</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    } catch (e) {
+      document.getElementById('bans-container').innerHTML =
+        `<div class="error-msg">Error loading bans: ${esc(String(e))}</div>`;
+    }
+  }
+
+  function fmtDuration(secs) {
+    if (secs < 60)   return secs + 's';
+    if (secs < 3600) return Math.floor(secs / 60) + 'm';
+    if (secs < 86400) return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+    return Math.floor(secs / 86400) + 'd ' + Math.floor((secs % 86400) / 3600) + 'h';
+  }
+
   // ── Tab switching ───────────────────────────────────────────────────────
   let currentTab = 'events';
 
@@ -397,8 +511,10 @@
     currentTab = tab;
     document.getElementById('section-events').style.display = tab === 'events' ? 'block' : 'none';
     document.getElementById('section-map').style.display    = tab === 'map'    ? 'block' : 'none';
+    document.getElementById('section-bans').style.display   = tab === 'bans'   ? 'block' : 'none';
     document.getElementById('tab-events').classList.toggle('active', tab === 'events');
     document.getElementById('tab-map').classList.toggle('active', tab === 'map');
+    document.getElementById('tab-bans').classList.toggle('active', tab === 'bans');
     if (tab === 'map') {
       // Double rAF ensures browser has laid out the container before Leaflet measures it.
       requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -406,6 +522,7 @@
         loadMap();
       }));
     }
+    if (tab === 'bans') loadBans();
   }
 
   // ── Leaflet attack map ──────────────────────────────────────────────────
