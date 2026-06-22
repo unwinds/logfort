@@ -15,10 +15,11 @@ import (
 	"github.com/unwinds/sshwatch/internal/geo"
 	"github.com/unwinds/sshwatch/internal/ingest"
 	"github.com/unwinds/sshwatch/internal/parse"
+	"github.com/unwinds/sshwatch/internal/responder"
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 func main() {
 	cfg, err := config.Load()
@@ -70,10 +71,21 @@ func main() {
 		}
 	}
 
+	// Build responder (noop if SSHWATCH_RESPONDER_ENABLED=false).
+	resp, allowlist, err := responder.New(cfg)
+	if err != nil {
+		slog.Error("responder init failed", "err", err)
+		os.Exit(1)
+	}
+	if cfg.ResponderEnabled {
+		slog.Info("responder enabled", "backend", resp.Name())
+	}
+
 	pipeline := ingest.NewPipeline(sources, parse.ParseLine, st)
 	pipeline.SetGeo(looker)
 
 	srv := api.New(cfg, st, version)
+	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
 	pipeline.SetPublishHook(srv.PublishEvent)
 

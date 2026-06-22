@@ -160,6 +160,26 @@
     .bans-table-wrap { overflow: auto; max-height: calc(100vh - 280px); }
     .ban-active   { color: var(--warn); }
     .ban-inactive { color: var(--muted); }
+
+    .btn-action {
+      padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600;
+      cursor: pointer; border: 1px solid transparent; background: none;
+      transition: background .15s, border-color .15s;
+    }
+    .btn-ban   { color: var(--danger); border-color: rgba(248,113,113,.3); }
+    .btn-ban:hover   { background: rgba(248,113,113,.15); }
+    .btn-unban { color: var(--muted);  border-color: rgba(100,116,139,.3); }
+    .btn-unban:hover { background: rgba(100,116,139,.15); }
+
+    .manual-ban-form {
+      display: flex; align-items: center; gap: 6px; margin-left: auto;
+    }
+    .manual-ban-form input {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 3px 8px; border-radius: 4px; font-size: 12px; font-family: monospace;
+    }
+    .manual-ban-form input::placeholder { color: var(--muted); }
+
     .tab-badge {
       display: inline-block; margin-left: 5px; padding: 0 5px;
       border-radius: 10px; font-size: 10px; font-weight: 700;
@@ -230,6 +250,11 @@
       <input type="checkbox" id="bans-active-only" checked onchange="loadBans()">
       Active only
     </label>
+    <div id="manual-ban-form" class="manual-ban-form" style="display:none;">
+      <input type="text" id="ban-ip-input" placeholder="IP address" style="width:140px;">
+      <input type="text" id="ban-reason-input" placeholder="Reason" style="width:120px;">
+      <button class="btn-action btn-ban" onclick="banIPManual()">Ban</button>
+    </div>
   </div>
   <div class="bans-table-wrap">
     <div id="bans-container"><div id="loading">Loading…</div></div>
@@ -254,6 +279,8 @@
 <script>
   const fmt = n => n?.toLocaleString() ?? '—';
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  let responderEnabled = false;
 
   function badgeClass(t) {
     if (t === 'accepted') return 'badge-accepted';
@@ -350,19 +377,26 @@
         return;
       }
 
-      const rows = events.map(e => `<tr>
-        <td class="ts">${fmtTS(e.ts)}</td>
-        <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
-        <td class="ip">${esc(e.ip)}</td>
-        <td class="country">${esc(e.country || '')}</td>
-        <td class="user">${esc(e.username || '')}</td>
-        <td>${e.port || ''}</td>
-        <td>${esc(e.source)}</td>
-      </tr>`).join('');
+      const actionCol = responderEnabled ? '<th></th>' : '';
+      const rows = events.map(e => {
+        const banBtn = (responderEnabled && e.event_type !== 'ban' && e.event_type !== 'unban')
+          ? `<button class="btn-action btn-ban" onclick="banIP('${esc(e.ip)}','')">Ban</button>`
+          : '';
+        return `<tr>
+          <td class="ts">${fmtTS(e.ts)}</td>
+          <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
+          <td class="ip">${esc(e.ip)}</td>
+          <td class="country">${esc(e.country || '')}</td>
+          <td class="user">${esc(e.username || '')}</td>
+          <td>${e.port || ''}</td>
+          <td>${esc(e.source)}</td>
+          ${responderEnabled ? `<td>${banBtn}</td>` : ''}
+        </tr>`;
+      }).join('');
 
       document.getElementById('events-container').innerHTML = `<table>
         <thead><tr>
-          <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th>
+          <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th>${actionCol}
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
@@ -377,7 +411,51 @@
       const d = await fetch('/api/health').then(r => r.json());
       document.getElementById('version-badge').textContent = 'v' + (d.version || '?');
       document.getElementById('status-dot').style.background = 'var(--success)';
+      responderEnabled = d.responder_enabled === true;
+      const mf = document.getElementById('manual-ban-form');
+      if (mf) mf.style.display = responderEnabled ? 'flex' : 'none';
     } catch { document.getElementById('status-dot').style.background = 'var(--danger)'; }
+  }
+
+  // ── Ban / Unban ─────────────────────────────────────────────────────────
+  async function banIP(ip, reason) {
+    if (!confirm(`Ban ${ip}?`)) return;
+    try {
+      const r = await fetch('/api/ban', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip, reason: reason || 'manual'}),
+      });
+      const d = await r.json();
+      if (!r.ok) { alert('Ban failed: ' + (d.error || r.status)); return; }
+      loadBans();
+      loadAll();
+    } catch (e) { alert('Ban error: ' + e); }
+  }
+
+  async function unbanIP(ip) {
+    if (!confirm(`Unban ${ip}?`)) return;
+    try {
+      const r = await fetch('/api/unban', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip}),
+      });
+      const d = await r.json();
+      if (!r.ok) { alert('Unban failed: ' + (d.error || r.status)); return; }
+      loadBans();
+      loadAll();
+    } catch (e) { alert('Unban error: ' + e); }
+  }
+
+  function banIPManual() {
+    const ip = document.getElementById('ban-ip-input').value.trim();
+    const reason = document.getElementById('ban-reason-input').value.trim();
+    if (!ip) { alert('Enter an IP address'); return; }
+    banIP(ip, reason).then(() => {
+      document.getElementById('ban-ip-input').value = '';
+      document.getElementById('ban-reason-input').value = '';
+    });
   }
 
   function loadAll() {
@@ -468,6 +546,7 @@
         return;
       }
 
+      const actionCol = responderEnabled ? '<th></th>' : '';
       const rows = bans.map(b => {
         const bannedAt = fmtTS(b.banned_at);
         const duration = b.unbanned_at
@@ -475,6 +554,9 @@
           : fmtDuration(Math.floor(Date.now() / 1000) - b.banned_at);
         const statusCls = b.active ? 'ban-active' : 'ban-inactive';
         const statusTxt = b.active ? 'ACTIVE' : 'EXPIRED';
+        const unbanBtn = (responderEnabled && b.active)
+          ? `<button class="btn-action btn-unban" onclick="unbanIP('${esc(b.ip)}')">Unban</button>`
+          : '';
         return `<tr>
           <td class="ip">${esc(b.ip)}</td>
           <td>${esc(b.jail || '—')}</td>
@@ -482,12 +564,13 @@
           <td style="color:var(--muted);font-size:11px;">${duration}</td>
           <td><span class="badge ${b.active ? 'badge-ban' : 'badge-unban'} ${statusCls}">${statusTxt}</span></td>
           <td style="color:var(--muted);font-size:11px;">${esc(b.source)}</td>
+          ${responderEnabled ? `<td>${unbanBtn}</td>` : ''}
         </tr>`;
       }).join('');
 
       document.getElementById('bans-container').innerHTML = `<table>
         <thead><tr>
-          <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Status</th><th>Source</th>
+          <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Status</th><th>Source</th>${actionCol}
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;

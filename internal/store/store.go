@@ -15,6 +15,10 @@ type Store interface {
 	ListBans(ctx context.Context, activeOnly bool) ([]BanRow, error)
 	GetMapPoints(ctx context.Context, window string) ([]MapPoint, error)
 	DeleteOldEvents(ctx context.Context, retentionDays int) (int64, error)
+	// BanIP records a manual ban in the bans table.
+	BanIP(ctx context.Context, ip, source, reason string) error
+	// UnbanIP marks all active bans for an IP as inactive.
+	UnbanIP(ctx context.Context, ip string) error
 	Close() error
 }
 

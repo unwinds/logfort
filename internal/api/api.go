@@ -4,40 +4,54 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	webui "github.com/unwinds/sshwatch/web"
 	"github.com/unwinds/sshwatch/internal/config"
 	"github.com/unwinds/sshwatch/internal/parse"
+	"github.com/unwinds/sshwatch/internal/responder"
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
 // Server holds API dependencies and implements http.Handler.
 type Server struct {
-	cfg     *config.Config
-	store   store.Store
-	mux     *http.ServeMux
-	hub     *Hub
-	version string
-	startTS time.Time
-
-	parsedFn func() (int64, int64)
+	cfg       *config.Config
+	store     store.Store
+	mux       *http.ServeMux
+	hub       *Hub
+	version   string
+	startTS   time.Time
+	parsedFn  func() (int64, int64)
+	responder responder.Responder
+	allowlist *responder.Allowlist
+	writeLim  *rateLimiter
 }
 
 // New creates and configures the HTTP server.
 func New(cfg *config.Config, st store.Store, version string) *Server {
 	s := &Server{
-		cfg:     cfg,
-		store:   st,
-		version: version,
-		startTS: time.Now(),
-		mux:     http.NewServeMux(),
-		hub:     newHub(),
+		cfg:      cfg,
+		store:    st,
+		version:  version,
+		startTS:  time.Now(),
+		mux:      http.NewServeMux(),
+		hub:      newHub(),
+		responder: responder.NoopResponder{},
+		writeLim: newRateLimiter(10, 20), // 10 req/s burst 20
 	}
 	s.routes()
 	return s
+}
+
+// SetResponder wires an active responder and its allowlist into the server.
+func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
+	s.responder = r
+	s.allowlist = al
 }
 
 // PublishEvent serialises a parsed event and broadcasts it to all SSE subscribers.
@@ -119,13 +133,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if s.parsedFn != nil {
 		parsed, unparsed = s.parsedFn()
 	}
-
 	resp := map[string]any{
-		"status":         "ok",
-		"version":        s.version,
-		"uptime_s":       int64(time.Since(s.startTS).Seconds()),
-		"parsed_total":   parsed,
-		"unparsed_total": unparsed,
+		"status":            "ok",
+		"version":           s.version,
+		"uptime_s":          int64(time.Since(s.startTS).Seconds()),
+		"parsed_total":      parsed,
+		"unparsed_total":    unparsed,
+		"responder_enabled": s.cfg.ResponderEnabled,
+		"responder_backend": s.responder.Name(),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -245,20 +260,93 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleBanPost(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.ResponderEnabled {
 		writeError(w, http.StatusForbidden, "responder is disabled; set SSHWATCH_RESPONDER_ENABLED=true to enable")
 		return
 	}
-	writeError(w, http.StatusNotImplemented, "responder backend not implemented yet (v0.6)")
+	if !s.writeLim.Allow() {
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+		return
+	}
+
+	var req struct {
+		IP     string `json:"ip"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.IP = strings.TrimSpace(req.IP)
+	req.Reason = strings.TrimSpace(req.Reason)
+
+	if !responder.IsValid(req.IP) {
+		writeError(w, http.StatusBadRequest, "invalid IP address")
+		return
+	}
+	// Anti-self-lockout: never ban the address making the request.
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteIP == req.IP {
+		writeError(w, http.StatusBadRequest, "cannot ban your own IP address")
+		return
+	}
+	if responder.IsPrivate(req.IP) {
+		writeError(w, http.StatusBadRequest, "cannot ban private/loopback IP addresses")
+		return
+	}
+	if s.allowlist != nil && s.allowlist.Contains(req.IP) {
+		writeError(w, http.StatusBadRequest, "IP is in the allowlist and cannot be banned")
+		return
+	}
+
+	if err := s.responder.Ban(r.Context(), req.IP); err != nil {
+		slog.Error("ban failed", "ip", req.IP, "err", err)
+		writeError(w, http.StatusInternalServerError, "ban failed: "+err.Error())
+		return
+	}
+	if err := s.store.BanIP(r.Context(), req.IP, s.responder.Name(), req.Reason); err != nil {
+		slog.Error("store ban", "ip", req.IP, "err", err)
+	}
+	slog.Info("manual ban", "ip", req.IP, "reason", req.Reason, "remote", remoteIP, "backend", s.responder.Name())
+	writeJSON(w, http.StatusOK, map[string]string{"status": "banned", "ip": req.IP})
 }
 
-func (s *Server) handleUnbanPost(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.ResponderEnabled {
 		writeError(w, http.StatusForbidden, "responder is disabled; set SSHWATCH_RESPONDER_ENABLED=true to enable")
 		return
 	}
-	writeError(w, http.StatusNotImplemented, "responder backend not implemented yet (v0.6)")
+	if !s.writeLim.Allow() {
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+		return
+	}
+
+	var req struct {
+		IP string `json:"ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.IP = strings.TrimSpace(req.IP)
+
+	if !responder.IsValid(req.IP) {
+		writeError(w, http.StatusBadRequest, "invalid IP address")
+		return
+	}
+
+	if err := s.responder.Unban(r.Context(), req.IP); err != nil {
+		slog.Error("unban failed", "ip", req.IP, "err", err)
+		writeError(w, http.StatusInternalServerError, "unban failed: "+err.Error())
+		return
+	}
+	if err := s.store.UnbanIP(r.Context(), req.IP); err != nil {
+		slog.Error("store unban", "ip", req.IP, "err", err)
+	}
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+	slog.Info("manual unban", "ip", req.IP, "remote", remoteIP, "backend", s.responder.Name())
+	writeJSON(w, http.StatusOK, map[string]string{"status": "unbanned", "ip": req.IP})
 }
 
 // --- helpers ---
@@ -282,4 +370,34 @@ func parseIntQuery(r *http.Request, key string, def int) int {
 		}
 	}
 	return def
+}
+
+// rateLimiter is a simple token-bucket rate limiter.
+type rateLimiter struct {
+	mu     sync.Mutex
+	tokens int
+	max    int
+	rate   int // tokens added per second
+	last   time.Time
+}
+
+func newRateLimiter(rate, burst int) *rateLimiter {
+	return &rateLimiter{tokens: burst, max: burst, rate: rate, last: time.Now()}
+}
+
+func (rl *rateLimiter) Allow() bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(rl.last).Seconds()
+	rl.last = now
+	rl.tokens += int(elapsed * float64(rl.rate))
+	if rl.tokens > rl.max {
+		rl.tokens = rl.max
+	}
+	if rl.tokens <= 0 {
+		return false
+	}
+	rl.tokens--
+	return true
 }

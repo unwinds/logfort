@@ -1,0 +1,199 @@
+package api_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/unwinds/sshwatch/internal/api"
+	"github.com/unwinds/sshwatch/internal/config"
+	"github.com/unwinds/sshwatch/internal/parse"
+	"github.com/unwinds/sshwatch/internal/responder"
+	"github.com/unwinds/sshwatch/internal/store"
+)
+
+// mockStore is a minimal in-memory store for API tests.
+type mockStore struct {
+	bannedIPs   []string
+	unbannedIPs []string
+}
+
+func (m *mockStore) InsertEvent(_ context.Context, _ *parse.Event) error { return nil }
+func (m *mockStore) ListEvents(_ context.Context, _ store.EventQuery) ([]store.EventRow, int64, error) {
+	return []store.EventRow{}, 0, nil
+}
+func (m *mockStore) GetStats(_ context.Context, _ string) (*store.Stats, error) {
+	return &store.Stats{
+		TopIPs: []store.TopIP{}, TopCountries: []store.TopCountry{},
+		TopUsernames: []store.TopUsername{}, Timeline: []store.TimeBucket{},
+	}, nil
+}
+func (m *mockStore) ListBans(_ context.Context, _ bool) ([]store.BanRow, error) {
+	return []store.BanRow{}, nil
+}
+func (m *mockStore) GetMapPoints(_ context.Context, _ string) ([]store.MapPoint, error) {
+	return []store.MapPoint{}, nil
+}
+func (m *mockStore) DeleteOldEvents(_ context.Context, _ int) (int64, error) { return 0, nil }
+func (m *mockStore) BanIP(_ context.Context, ip, _, _ string) error {
+	m.bannedIPs = append(m.bannedIPs, ip)
+	return nil
+}
+func (m *mockStore) UnbanIP(_ context.Context, ip string) error {
+	m.unbannedIPs = append(m.unbannedIPs, ip)
+	return nil
+}
+func (m *mockStore) Close() error { return nil }
+
+// mockResponder tracks ban/unban calls.
+type mockResponder struct {
+	banned   []string
+	unbanned []string
+}
+
+func (mr *mockResponder) Ban(_ context.Context, ip string) error {
+	mr.banned = append(mr.banned, ip)
+	return nil
+}
+func (mr *mockResponder) Unban(_ context.Context, ip string) error {
+	mr.unbanned = append(mr.unbanned, ip)
+	return nil
+}
+func (mr *mockResponder) List(_ context.Context) ([]string, error) { return mr.banned, nil }
+func (mr *mockResponder) Name() string                              { return "mock" }
+
+func newTestServer(t *testing.T, responderEnabled bool) (*api.Server, *mockStore, *mockResponder) {
+	t.Helper()
+	cfg := &config.Config{
+		Listen:           "127.0.0.1:0",
+		ResponderEnabled: responderEnabled,
+		ResponderBackend: "mock",
+		IgnoreIPs:        []string{"127.0.0.0/8", "10.0.0.0/8"},
+		RetentionDays:    90,
+	}
+	ms := &mockStore{}
+	srv := api.New(cfg, ms, "test")
+
+	mr := &mockResponder{}
+	al, err := responder.ParseAllowlist(cfg.IgnoreIPs)
+	if err != nil {
+		t.Fatalf("allowlist: %v", err)
+	}
+	srv.SetResponder(mr, al)
+	return srv, ms, mr
+}
+
+func postJSON(t *testing.T, srv http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "203.0.113.99:12345" // external IP as requester
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	return w
+}
+
+func TestBanPost_ResponderDisabled(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	w := postJSON(t, srv, "/api/ban", map[string]string{"ip": "203.0.113.5"})
+	if w.Code != http.StatusForbidden {
+		t.Errorf("want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUnbanPost_ResponderDisabled(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	w := postJSON(t, srv, "/api/unban", map[string]string{"ip": "203.0.113.5"})
+	if w.Code != http.StatusForbidden {
+		t.Errorf("want 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBanPost_InvalidIP(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	w := postJSON(t, srv, "/api/ban", map[string]string{"ip": "not-an-ip"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d", w.Code)
+	}
+}
+
+func TestBanPost_AllowlistedIP(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	w := postJSON(t, srv, "/api/ban", map[string]string{"ip": "10.0.0.1"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for allowlisted IP, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBanPost_PrivateIP(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	w := postJSON(t, srv, "/api/ban", map[string]string{"ip": "192.168.1.1"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for private IP, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBanPost_SelfLockout(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	// The requester IP is 203.0.113.99 (set in postJSON).
+	w := postJSON(t, srv, "/api/ban", map[string]string{"ip": "203.0.113.99"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for self-lockout, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBanPost_Success(t *testing.T) {
+	srv, ms, mr := newTestServer(t, true)
+	w := postJSON(t, srv, "/api/ban", map[string]string{"ip": "203.0.113.5", "reason": "test"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(mr.banned) != 1 || mr.banned[0] != "203.0.113.5" {
+		t.Errorf("responder.Ban not called: %v", mr.banned)
+	}
+	if len(ms.bannedIPs) != 1 || ms.bannedIPs[0] != "203.0.113.5" {
+		t.Errorf("store.BanIP not called: %v", ms.bannedIPs)
+	}
+}
+
+func TestUnbanPost_Success(t *testing.T) {
+	srv, ms, mr := newTestServer(t, true)
+	w := postJSON(t, srv, "/api/unban", map[string]string{"ip": "203.0.113.5"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(mr.unbanned) != 1 || mr.unbanned[0] != "203.0.113.5" {
+		t.Errorf("responder.Unban not called: %v", mr.unbanned)
+	}
+	if len(ms.unbannedIPs) != 1 || ms.unbannedIPs[0] != "203.0.113.5" {
+		t.Errorf("store.UnbanIP not called: %v", ms.unbannedIPs)
+	}
+}
+
+func TestHealth_ResponderField(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("health: %d", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["responder_enabled"] != true {
+		t.Errorf("responder_enabled: %v", resp["responder_enabled"])
+	}
+	if resp["responder_backend"] != "mock" {
+		t.Errorf("responder_backend: %v", resp["responder_backend"])
+	}
+}
+
+// avoid unused import
+var _ = time.Now

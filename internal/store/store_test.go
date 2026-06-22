@@ -199,3 +199,45 @@ func TestBanTracking(t *testing.T) {
 		t.Errorf("expected no active bans, got %d", len(bans))
 	}
 }
+
+func TestBanIPAndUnbanIP(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if err := s.BanIP(ctx, "203.0.113.5", "nftables", "manual test"); err != nil {
+		t.Fatalf("BanIP: %v", err)
+	}
+
+	bans, err := s.ListBans(ctx, true)
+	if err != nil {
+		t.Fatalf("ListBans: %v", err)
+	}
+	if len(bans) != 1 {
+		t.Fatalf("want 1 ban, got %d", len(bans))
+	}
+	if bans[0].IP != "203.0.113.5" {
+		t.Errorf("IP: %q", bans[0].IP)
+	}
+	if !bans[0].Active {
+		t.Error("want active=true")
+	}
+	if bans[0].Source != "nftables" {
+		t.Errorf("Source: %q", bans[0].Source)
+	}
+	if bans[0].Reason != "manual test" {
+		t.Errorf("Reason: %q", bans[0].Reason)
+	}
+
+	if err := s.UnbanIP(ctx, "203.0.113.5"); err != nil {
+		t.Fatalf("UnbanIP: %v", err)
+	}
+
+	bans, _ = s.ListBans(ctx, true)
+	if len(bans) != 0 {
+		t.Errorf("want 0 active bans after unban, got %d", len(bans))
+	}
+	all, _ := s.ListBans(ctx, false)
+	if len(all) != 1 || all[0].Active {
+		t.Errorf("want 1 inactive ban in history, got %v", all)
+	}
+}

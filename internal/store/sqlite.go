@@ -440,6 +440,26 @@ func (s *SQLiteStore) DeleteOldEvents(ctx context.Context, retentionDays int) (i
 	return res.RowsAffected()
 }
 
+// BanIP inserts a new ban record into the bans table.
+func (s *SQLiteStore) BanIP(ctx context.Context, ip, source, reason string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO bans(ip, banned_at, active, source, reason)
+		VALUES(?, ?, 1, ?, ?)
+		ON CONFLICT DO NOTHING`,
+		ip, time.Now().Unix(), source, nullStr(reason),
+	)
+	return err
+}
+
+// UnbanIP marks all active bans for an IP as inactive.
+func (s *SQLiteStore) UnbanIP(ctx context.Context, ip string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE bans SET active=0, unbanned_at=? WHERE ip=? AND active=1`,
+		time.Now().Unix(), ip,
+	)
+	return err
+}
+
 // Close closes the underlying database connection.
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
