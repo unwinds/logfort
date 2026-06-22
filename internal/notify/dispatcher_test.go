@@ -38,9 +38,12 @@ func (s *stubStore) GetStats(context.Context, string) (*store.Stats, error)     
 func (s *stubStore) ListBans(context.Context, bool) ([]store.BanRow, error)       { return nil, nil }
 func (s *stubStore) GetMapPoints(context.Context, string) ([]store.MapPoint, error) { return nil, nil }
 func (s *stubStore) DeleteOldEvents(context.Context, int) (int64, error)          { return 0, nil }
-func (s *stubStore) BanIP(context.Context, string, string, string) error          { return nil }
-func (s *stubStore) UnbanIP(context.Context, string) error                        { return nil }
-func (s *stubStore) Close() error                                                  { return nil }
+func (s *stubStore) BanIP(context.Context, string, string, string) error                    { return nil }
+func (s *stubStore) UnbanIP(context.Context, string) error                                  { return nil }
+func (s *stubStore) GetSetting(context.Context, string) (string, bool, error)               { return "", false, nil }
+func (s *stubStore) SetSetting(context.Context, string, string) error                       { return nil }
+func (s *stubStore) GetAllSettings(context.Context) (map[string]string, error)              { return nil, nil }
+func (s *stubStore) Close() error                                                            { return nil }
 
 // --- helpers ---
 

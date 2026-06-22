@@ -27,6 +27,12 @@ type Store interface {
 	UnbanIP(ctx context.Context, ip string) error
 	// CountIPEvents returns the number of non-ban/unban events from ip since the given time.
 	CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error)
+	// GetSetting returns the value for key. found is false when the key does not exist.
+	GetSetting(ctx context.Context, key string) (value string, found bool, err error)
+	// SetSetting upserts a key-value pair in the settings table.
+	SetSetting(ctx context.Context, key, value string) error
+	// GetAllSettings returns all key-value pairs from the settings table.
+	GetAllSettings(ctx context.Context) (map[string]string, error)
 	Close() error
 }
 

@@ -51,7 +51,10 @@ func (m *mockStore) UnbanIP(_ context.Context, ip string) error {
 func (m *mockStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
-func (m *mockStore) Close() error { return nil }
+func (m *mockStore) GetSetting(_ context.Context, _ string) (string, bool, error)  { return "", false, nil }
+func (m *mockStore) SetSetting(_ context.Context, _, _ string) error                { return nil }
+func (m *mockStore) GetAllSettings(_ context.Context) (map[string]string, error)    { return nil, nil }
+func (m *mockStore) Close() error                                                    { return nil }
 
 // mockResponder tracks ban/unban calls.
 type mockResponder struct {

@@ -41,6 +41,11 @@ func main() {
 	}
 	defer st.Close()
 
+	// Overlay notification settings saved via the UI (env vars take priority).
+	if dbSettings, err := st.GetAllSettings(context.Background()); err == nil {
+		cfg.OverlaySettings(dbSettings)
+	}
+
 	// Build log sources.
 	var sources []ingest.Source
 	if cfg.Backend == "file" {
@@ -109,7 +114,7 @@ func main() {
 	}
 	pipeline.SetPublishHook(func(ev *parse.Event) {
 		srv.PublishEvent(ev)
-		dispatcher.Notify(ev) // nil-safe
+		srv.NotifyEvent(ev) // uses current dispatcher, swappable via settings API
 	})
 
 	httpSrv := &http.Server{

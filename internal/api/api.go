@@ -14,6 +14,7 @@ import (
 
 	webui "github.com/unwinds/logfort/web"
 	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/notify"
 	"github.com/unwinds/logfort/internal/parse"
 	"github.com/unwinds/logfort/internal/responder"
 	"github.com/unwinds/logfort/internal/store"
@@ -32,6 +33,7 @@ type Server struct {
 	responder responder.Responder
 	allowlist *responder.Allowlist
 	banLim    *rateLimiter // limits ban requests only; unban is not throttled
+	notifyMu  sync.RWMutex
 	notifyFn  func(*parse.Event)
 }
 
@@ -62,9 +64,22 @@ func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
 	s.allowlist = al
 }
 
-// SetNotifyFunc wires a notification callback called after successful manual bans.
+// SetNotifyFunc wires a notification callback. Thread-safe; can be called at runtime.
 func (s *Server) SetNotifyFunc(fn func(*parse.Event)) {
+	s.notifyMu.Lock()
 	s.notifyFn = fn
+	s.notifyMu.Unlock()
+}
+
+// NotifyEvent dispatches ev through the current notification callback.
+// Safe to call from multiple goroutines and after SetNotifyFunc.
+func (s *Server) NotifyEvent(ev *parse.Event) {
+	s.notifyMu.RLock()
+	fn := s.notifyFn
+	s.notifyMu.RUnlock()
+	if fn != nil {
+		fn(ev)
+	}
 }
 
 // PublishEvent serialises a parsed event and broadcasts it to all SSE subscribers.
@@ -143,6 +158,11 @@ func (s *Server) routes() {
 	// Write endpoints (require responder enabled).
 	s.mux.HandleFunc("POST /api/ban", s.handleBanPost)
 	s.mux.HandleFunc("POST /api/unban", s.handleUnbanPost)
+
+	// Settings endpoints.
+	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	s.mux.HandleFunc("POST /api/settings", s.handlePostSettings)
+	s.mux.HandleFunc("POST /api/notify/test", s.handleNotifyTest)
 
 	// Static frontend.
 	distFS, err := fs.Sub(webui.FS, "dist")
@@ -349,14 +369,12 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("manual ban", "ip", req.IP, "reason", req.Reason, "remote", remoteIP, "backend", s.responder.Name())
-	if s.notifyFn != nil {
-		s.notifyFn(&parse.Event{
-			TS:        time.Now().UTC(),
-			IP:        req.IP,
-			EventType: "ban",
-			Source:    "manual",
-		})
-	}
+	s.NotifyEvent(&parse.Event{
+		TS:        time.Now().UTC(),
+		IP:        req.IP,
+		EventType: "ban",
+		Source:    "manual",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "banned", "ip": req.IP})
 }
 
@@ -394,6 +412,90 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 	slog.Info("manual unban", "ip", req.IP, "remote", remoteIP, "backend", s.responder.Name())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unbanned", "ip": req.IP})
+}
+
+// --- settings handlers ---
+
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"telegram_token":   s.cfg.NotifyTelegramToken,
+		"telegram_chat_id": s.cfg.NotifyTelegramChat,
+		"discord_url":      s.cfg.NotifyDiscordURL,
+		"webhook_url":      s.cfg.NotifyWebhookURL,
+		"rules":            strings.Join(s.cfg.NotifyRules, ","),
+	})
+}
+
+func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TelegramToken string `json:"telegram_token"`
+		TelegramChat  string `json:"telegram_chat_id"`
+		DiscordURL    string `json:"discord_url"`
+		WebhookURL    string `json:"webhook_url"`
+		Rules         string `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	pairs := [][2]string{
+		{"notify.telegram.token", req.TelegramToken},
+		{"notify.telegram.chat_id", req.TelegramChat},
+		{"notify.discord.url", req.DiscordURL},
+		{"notify.webhook.url", req.WebhookURL},
+		{"notify.rules", req.Rules},
+	}
+	for _, p := range pairs {
+		if err := s.store.SetSetting(r.Context(), p[0], p[1]); err != nil {
+			slog.Error("save setting", "key", p[0], "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to save settings")
+			return
+		}
+	}
+
+	// Apply to in-memory config.
+	s.cfg.NotifyTelegramToken = req.TelegramToken
+	s.cfg.NotifyTelegramChat = req.TelegramChat
+	s.cfg.NotifyDiscordURL = req.DiscordURL
+	s.cfg.NotifyWebhookURL = req.WebhookURL
+	s.cfg.NotifyRules = nil
+	for _, rule := range strings.Split(req.Rules, ",") {
+		if rule = strings.TrimSpace(rule); rule != "" {
+			s.cfg.NotifyRules = append(s.cfg.NotifyRules, rule)
+		}
+	}
+
+	// Rebuild dispatcher with updated config.
+	d, err := notify.New(s.cfg, s.store)
+	if err != nil {
+		slog.Warn("notify rebuild after settings save", "err", err)
+	}
+	if d != nil {
+		s.SetNotifyFunc(d.Notify)
+	} else {
+		s.SetNotifyFunc(nil)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	s.notifyMu.RLock()
+	fn := s.notifyFn
+	s.notifyMu.RUnlock()
+	if fn == nil {
+		writeError(w, http.StatusBadRequest, "no notifiers configured — save settings first")
+		return
+	}
+	fn(&parse.Event{
+		TS:        time.Now().UTC(),
+		IP:        "203.0.113.1",
+		EventType: "ban",
+		Username:  "test",
+		Source:    "logfort-test",
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }
 
 // --- helpers ---

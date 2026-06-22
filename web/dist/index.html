@@ -9,808 +9,1091 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:      #0f1117;
-      --surface: #1a1d27;
-      --border:  #2a2d3a;
-      --text:    #e2e8f0;
-      --muted:   #64748b;
-      --accent:  #38bdf8;
-      --danger:  #f87171;
-      --success: #4ade80;
-      --warn:    #fbbf24;
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --surface2: #21262d;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --accent:   #58a6ff;
+      --success:  #3fb950;
+      --danger:   #f85149;
+      --warn:     #d29922;
+      --sidebar-w: 220px;
     }
 
-    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+    html, body { height: 100%; overflow: hidden; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 13px; display: flex; }
 
-    header {
-      display: flex; align-items: center; gap: 12px;
-      padding: 14px 24px;
-      background: var(--surface); border-bottom: 1px solid var(--border);
+    /* ── Sidebar ──────────────────────────────────────────────────────────── */
+    .sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      height: 100vh; overflow: hidden;
     }
-    header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
-    header .version { font-size: 11px; color: var(--muted); }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
-    .spacer { flex: 1; }
-    header select {
-      background: var(--bg); border: 1px solid var(--border); color: var(--text);
-      padding: 4px 8px; border-radius: 4px; font-size: 13px; cursor: pointer;
+    .sidebar-logo {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo h1 { font-size: 17px; font-weight: 700; color: var(--accent); letter-spacing: -.3px; }
+    .sidebar-logo .tagline { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+    .sidebar-nav { flex: 1; padding: 8px 0; overflow-y: auto; }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 16px; cursor: pointer; border: none; background: none;
+      color: var(--muted); font-size: 13px; font-weight: 500; width: 100%; text-align: left;
+      border-left: 2px solid transparent; transition: color .12s, background .12s;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(88,166,255,.06); }
+    .nav-icon { width: 16px; flex-shrink: 0; opacity: .7; }
+    .nav-item.active .nav-icon { opacity: 1; }
+
+    .nav-badge {
+      margin-left: auto; font-size: 10px; font-weight: 700; padding: 1px 6px;
+      border-radius: 10px; background: rgba(210,153,34,.2); color: var(--warn);
     }
 
-    .stats-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1px; background: var(--border); border-bottom: 1px solid var(--border);
+    .sidebar-bottom {
+      padding: 12px 16px; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--muted);
     }
-    .stat-card { background: var(--surface); padding: 16px 20px; }
-    .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-    .stat-card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
-    .value.danger  { color: var(--danger); }
-    .value.success { color: var(--success); }
-    .value.warn    { color: var(--warn); }
-    .value.accent  { color: var(--accent); }
+    .status-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
 
-    /* Timeline chart */
+    /* ── Main area ────────────────────────────────────────────────────────── */
+    .main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 12px; padding: 10px 20px;
+      border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+    }
+    .topbar-title { font-size: 14px; font-weight: 600; }
+    .topbar .spacer { flex: 1; }
+    .topbar select {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .live-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+      background: rgba(63,185,80,.15); color: var(--success); letter-spacing: .04em;
+    }
+    .live-badge.offline { background: rgba(248,81,73,.15); color: var(--danger); }
+
+    .content { flex: 1; overflow-y: auto; overflow-x: hidden; }
+
+    /* ── Stats cards ──────────────────────────────────────────────────────── */
+    .stats-strip {
+      display: grid; grid-template-columns: repeat(5, 1fr);
+      gap: 1px; background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-card { background: var(--surface2); padding: 14px 18px; }
+    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .stat-val { font-size: 24px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .stat-val.danger  { color: var(--danger); }
+    .stat-val.success { color: var(--success); }
+    .stat-val.warn    { color: var(--warn); }
+    .stat-val.accent  { color: var(--accent); }
+
+    /* ── Timeline ─────────────────────────────────────────────────────────── */
     .chart-wrap {
       background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 12px 20px 8px;
+      padding: 10px 20px 8px;
     }
-    .chart-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
-    canvas#timeline { width: 100%; height: 64px; display: block; }
+    .chart-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+    canvas#timeline { width: 100%; height: 56px; display: block; }
 
-    .main { display: grid; grid-template-columns: 1fr 260px; }
+    /* ── Two-column dashboard grid ────────────────────────────────────────── */
+    .dash-grid { display: grid; grid-template-columns: 1fr 240px; height: 100%; }
 
-    .events-panel { border-right: 1px solid var(--border); overflow: auto; max-height: calc(100vh - 280px); }
-    .panel-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 16px; border-bottom: 1px solid var(--border);
-      background: var(--surface); position: sticky; top: 0; z-index: 2;
+    .panel { display: flex; flex-direction: column; overflow: hidden; }
+    .panel-hd {
+      display: flex; align-items: center; gap: 8px; padding: 9px 14px;
+      border-bottom: 1px solid var(--border); background: var(--surface);
+      font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
+      flex-shrink: 0;
     }
-    .panel-header h2 { font-size: 13px; font-weight: 600; }
+    .panel-hd .ml { margin-left: auto; }
+    .panel-body { flex: 1; overflow-y: auto; }
 
+    /* ── Table ────────────────────────────────────────────────────────────── */
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th {
-      text-align: left; padding: 8px 10px;
+      text-align: left; padding: 7px 10px; position: sticky; top: 0; z-index: 1;
       background: var(--surface); color: var(--muted);
-      font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-      position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--border);
+      font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+      border-bottom: 1px solid var(--border);
     }
     td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
-    tr:hover td { background: rgba(255,255,255,.03); }
+    tr:hover td { background: rgba(255,255,255,.025); }
 
-    .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
-    .badge-failed   { background: rgba(248,113,113,.15); color: var(--danger); }
-    .badge-accepted { background: rgba(74,222,128,.15);  color: var(--success); }
-    .badge-ban      { background: rgba(251,191,36,.15);  color: var(--warn); }
-    .badge-unban    { background: rgba(100,116,139,.15); color: var(--muted); }
-    .badge-other    { background: rgba(56,189,248,.15);  color: var(--accent); }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+    .badge-failed   { background: rgba(248,81,73,.12);  color: #ff7b72; }
+    .badge-accepted { background: rgba(63,185,80,.12);  color: #56d364; }
+    .badge-ban      { background: rgba(210,153,34,.12); color: #e3b341; }
+    .badge-unban    { background: rgba(139,148,158,.12);color: var(--muted); }
+    .badge-other    { background: rgba(88,166,255,.12); color: var(--accent); }
 
-    .ip   { font-family: monospace; color: var(--accent); }
-    .user { font-family: monospace; }
+    .ip   { font-family: 'SF Mono', 'Fira Code', monospace; color: var(--accent); font-size: 12px; }
+    .user { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
     .ts   { color: var(--muted); white-space: nowrap; font-size: 11px; }
-    .country { font-size: 11px; color: var(--muted); }
+    .geo  { font-size: 11px; color: var(--muted); }
 
-    .sidebar { overflow: auto; max-height: calc(100vh - 280px); }
-    .top-list { padding: 0; }
-    .section-title {
-      padding: 10px 14px; font-size: 11px; color: var(--muted);
-      text-transform: uppercase; letter-spacing: .05em;
+    @keyframes rowIn { from { background: rgba(88,166,255,.08); } to { background: transparent; } }
+    tr.live-row td { animation: rowIn .6s ease; }
+
+    /* ── Top lists sidebar ────────────────────────────────────────────────── */
+    .top-list { list-style: none; }
+    .top-list-hd {
+      padding: 9px 14px; font-size: 10px; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .06em;
       border-bottom: 1px solid var(--border); background: var(--surface);
-      list-style: none;
     }
-    .top-list li {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 6px 14px; border-bottom: 1px solid var(--border); list-style: none;
+    .top-list li.entry {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-bottom: 1px solid var(--border);
     }
-    .top-list li .name { font-family: monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
-    .top-list li .count { font-size: 11px; font-weight: 600; background: var(--bg); border-radius: 3px; padding: 1px 6px; color: var(--danger); flex-shrink: 0; }
+    .top-list li.entry .name {
+      font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+    }
+    .top-cnt {
+      font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+      background: var(--bg); color: var(--danger); flex-shrink: 0;
+    }
 
-    #loading { display: flex; align-items: center; justify-content: center; height: 120px; color: var(--muted); }
-    .error-msg { padding: 24px; color: var(--danger); font-size: 13px; text-align: center; }
+    /* ── Full-width sections (Map, Bans, Events) ──────────────────────────── */
+    #section-events { display: none; flex-direction: column; height: 100%; }
+    #section-bans   { display: none; flex-direction: column; height: 100%; }
+    #section-map    { display: none; flex-direction: column; height: 100%; }
+    #section-settings { display: none; flex-direction: column; overflow-y: auto; }
 
-    .live-badge {
-      font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 3px;
-      background: rgba(74,222,128,.15); color: var(--success); letter-spacing: .04em;
+    .section-toolbar {
+      display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+      border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+      flex-wrap: wrap;
     }
-    .live-badge.offline { background: rgba(248,113,113,.15); color: var(--danger); }
-    @keyframes fadeIn { from { opacity: 0; background: rgba(56,189,248,.06); } to { opacity: 1; background: transparent; } }
-    tr.live-row td { animation: fadeIn .5s ease; }
+    .section-toolbar h2 { font-size: 13px; font-weight: 600; }
+    .section-toolbar label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-    /* Tab bar */
-    .tab-bar {
-      display: flex; gap: 0; border-bottom: 1px solid var(--border);
-      background: var(--surface);
-    }
-    .tab-btn {
-      padding: 9px 20px; font-size: 13px; font-weight: 500; cursor: pointer;
-      border: none; background: none; color: var(--muted);
-      border-bottom: 2px solid transparent; margin-bottom: -1px;
-      transition: color .15s, border-color .15s;
-    }
-    .tab-btn:hover { color: var(--text); }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .full-table-wrap { flex: 1; overflow-y: auto; }
 
-    /* Map */
-    #section-map { display: none; }
-    #map-el { height: calc(100vh - 272px); background: var(--bg); }
+    /* ── Action buttons ───────────────────────────────────────────────────── */
+    .btn {
+      padding: 4px 10px; border-radius: 5px; font-size: 11px; font-weight: 600;
+      cursor: pointer; border: 1px solid transparent; transition: background .12s;
+    }
+    .btn-danger  { color: var(--danger); border-color: rgba(248,81,73,.3); background: none; }
+    .btn-danger:hover  { background: rgba(248,81,73,.12); }
+    .btn-muted   { color: var(--muted);  border-color: var(--border); background: none; }
+    .btn-muted:hover   { background: var(--surface2); }
+    .btn-primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+    .btn-primary:hover { background: #4493f8; }
+    .btn-success { color: var(--success); border-color: rgba(63,185,80,.3); background: none; }
+    .btn-success:hover { background: rgba(63,185,80,.12); }
+
+    .ban-form { display: flex; gap: 6px; align-items: center; }
+    .ban-form input {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 4px 8px; border-radius: 5px; font-size: 12px; font-family: monospace;
+    }
+    .ban-form input::placeholder { color: var(--muted); }
+
+    .ban-active   { color: var(--warn); }
+    .ban-inactive { color: var(--muted); }
+
+    /* ── Map ──────────────────────────────────────────────────────────────── */
+    #map-el { flex: 1; background: var(--bg); }
     .leaflet-container { background: var(--bg) !important; }
     .leaflet-popup-content-wrapper, .leaflet-popup-tip {
       background: var(--surface); color: var(--text); border: 1px solid var(--border);
-      box-shadow: 0 4px 12px rgba(0,0,0,.5);
+      box-shadow: 0 4px 16px rgba(0,0,0,.6);
     }
     .leaflet-popup-content { font-size: 12px; line-height: 1.6; }
     .leaflet-popup-content b { color: var(--accent); font-family: monospace; }
     .map-legend {
-      position: absolute; bottom: 24px; right: 12px; z-index: 1000;
+      position: absolute; bottom: 20px; right: 12px; z-index: 1000;
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 6px; padding: 10px 14px; font-size: 11px; color: var(--muted);
     }
-    .map-legend .leg-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-    .map-legend .dot { border-radius: 50%; background: #f87171; opacity: .8; flex-shrink: 0; }
-    #map-empty { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-      color:var(--muted); font-size:13px; text-align:center; z-index:500; pointer-events:none; }
-
-    /* Bans panel */
-    #section-bans { display: none; }
-    .bans-toolbar {
-      display: flex; align-items: center; gap: 12px;
-      padding: 10px 16px; border-bottom: 1px solid var(--border);
-      background: var(--surface);
+    .map-legend .leg-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .map-legend .dot { border-radius: 50%; background: #f85149; opacity: .8; flex-shrink: 0; }
+    #map-empty {
+      display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      color: var(--muted); font-size: 13px; text-align: center; z-index: 500; pointer-events: none;
     }
-    .bans-toolbar h2 { font-size: 13px; font-weight: 600; }
-    .bans-toolbar label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; margin-left: auto; }
-    .bans-table-wrap { overflow: auto; max-height: calc(100vh - 280px); }
-    .ban-active   { color: var(--warn); }
-    .ban-inactive { color: var(--muted); }
 
-    .btn-action {
-      padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600;
-      cursor: pointer; border: 1px solid transparent; background: none;
-      transition: background .15s, border-color .15s;
-    }
-    .btn-ban   { color: var(--danger); border-color: rgba(248,113,113,.3); }
-    .btn-ban:hover   { background: rgba(248,113,113,.15); }
-    .btn-unban { color: var(--muted);  border-color: rgba(100,116,139,.3); }
-    .btn-unban:hover { background: rgba(100,116,139,.15); }
+    /* ── Settings ─────────────────────────────────────────────────────────── */
+    .settings-body { padding: 24px; max-width: 760px; }
+    .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
-    .manual-ban-form {
-      display: flex; align-items: center; gap: 6px; margin-left: auto;
+    .settings-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      overflow: hidden;
     }
-    .manual-ban-form input {
+    .settings-card.wide { grid-column: 1 / -1; }
+
+    .settings-card-hd {
+      display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+      border-bottom: 1px solid var(--border); background: var(--surface2);
+    }
+    .settings-card-hd h3 { font-size: 13px; font-weight: 600; }
+    .notifier-status {
+      margin-left: auto; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+      background: rgba(139,148,158,.12); color: var(--muted);
+    }
+    .notifier-status.active { background: rgba(63,185,80,.12); color: var(--success); }
+
+    .settings-fields { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .field-group { display: flex; flex-direction: column; gap: 4px; }
+    .field-group label { font-size: 11px; color: var(--muted); font-weight: 500; }
+    .field-row { display: flex; gap: 6px; align-items: center; }
+    .field-group input[type=text],
+    .field-group input[type=password],
+    .field-group input[type=number] {
       background: var(--bg); border: 1px solid var(--border); color: var(--text);
-      padding: 3px 8px; border-radius: 4px; font-size: 12px; font-family: monospace;
+      padding: 7px 10px; border-radius: 5px; font-size: 12px; font-family: monospace; width: 100%;
+      transition: border-color .12s;
     }
-    .manual-ban-form input::placeholder { color: var(--muted); }
+    .field-group input:focus { outline: none; border-color: var(--accent); }
+    .field-group input::placeholder { color: var(--muted); font-family: inherit; }
 
-    .tab-badge {
-      display: inline-block; margin-left: 5px; padding: 0 5px;
-      border-radius: 10px; font-size: 10px; font-weight: 700;
-      background: rgba(251,191,36,.2); color: var(--warn); vertical-align: middle;
+    .rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .rule-item { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+    .rule-item input[type=checkbox] { margin-top: 1px; accent-color: var(--accent); }
+    .rule-desc { font-size: 12px; color: var(--text); }
+    .rule-desc small { display: block; color: var(--muted); font-size: 10px; margin-top: 1px; }
+
+    .threshold-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .threshold-row span { font-size: 12px; color: var(--muted); }
+    .threshold-row input[type=number] { width: 70px !important; }
+    .threshold-row select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 6px 8px; border-radius: 5px; font-size: 12px;
     }
 
-    /* ── Mobile adaptive (≤700 px) ──────────────────────────────────────── */
+    .settings-actions {
+      display: flex; align-items: center; gap: 10px; padding: 16px 0 0; flex-wrap: wrap;
+    }
+    .settings-status { font-size: 12px; margin-left: 8px; }
+    .settings-status.ok   { color: var(--success); }
+    .settings-status.err  { color: var(--danger); }
+
+    /* ── Misc ─────────────────────────────────────────────────────────────── */
+    .empty-state { display: flex; align-items: center; justify-content: center; height: 120px; color: var(--muted); font-size: 13px; }
+    .error-msg   { padding: 20px; color: var(--danger); font-size: 13px; text-align: center; }
+
+    /* ── Mobile (≤700 px) ─────────────────────────────────────────────────── */
     @media (max-width: 700px) {
-      header { padding: 10px 14px; }
+      :root { --sidebar-w: 0px; }
+      .sidebar { display: none; }
+      .main-area { width: 100%; }
 
-      .stat-card { padding: 10px 14px; }
-      .stat-card .value { font-size: 20px; }
+      .stats-strip { grid-template-columns: repeat(3, 1fr); }
+      .stat-card:nth-child(n+4) { display: none; }
 
-      /* Stack events + sidebar vertically */
-      .main { grid-template-columns: 1fr; }
+      .dash-grid { grid-template-columns: 1fr; }
+      .top-sidebar { display: none; }
 
-      .events-panel {
-        max-height: 55vh;
-        border-right: none;
-        border-bottom: 1px solid var(--border);
+      .settings-grid { grid-template-columns: 1fr; }
+
+      /* Bottom nav bar replaces sidebar */
+      body::after {
+        content: '';
+        display: block; position: fixed; bottom: 0; left: 0; right: 0; height: 52px;
+        background: var(--surface); border-top: 1px solid var(--border); z-index: 100;
       }
-
-      /* Top-lists as a horizontal scroll strip below events */
-      .sidebar {
-        display: flex;
-        flex-direction: row;
-        overflow-x: auto;
-        max-height: none;
-        -webkit-overflow-scrolling: touch;
+      .mobile-nav {
+        display: flex !important; position: fixed; bottom: 0; left: 0; right: 0; height: 52px;
+        z-index: 101; background: var(--surface); border-top: 1px solid var(--border);
       }
-      .top-list { flex: 0 0 170px; border-right: 1px solid var(--border); }
-      .top-list li .name { max-width: 120px; }
+      .main-area { padding-bottom: 52px; }
+      .content { padding-bottom: 0; }
 
-      /* Events table: hide Port (col 6) and Source (col 7) */
-      #events-container table th:nth-child(6),
-      #events-container table td:nth-child(6),
-      #events-container table th:nth-child(7),
-      #events-container table td:nth-child(7) { display: none; }
+      /* hide Port and Source columns in events table on mobile */
+      #events-table th:nth-child(6),
+      #events-table td:nth-child(6),
+      #events-table th:nth-child(7),
+      #events-table td:nth-child(7) { display: none; }
 
-      /* Bans table: hide Duration (col 4) */
-      #bans-container table th:nth-child(4),
-      #bans-container table td:nth-child(4) { display: none; }
+      /* hide Duration column in bans table */
+      #bans-table th:nth-child(4),
+      #bans-table td:nth-child(4) { display: none; }
 
-      .bans-table-wrap { max-height: 55vh; }
-
-      /* Bans toolbar wraps on narrow screens */
-      .bans-toolbar { flex-wrap: wrap; row-gap: 6px; }
-      .bans-toolbar label { margin-left: 0; }
-      .manual-ban-form { margin-left: 0; width: 100%; flex-wrap: wrap; }
-      .manual-ban-form input { flex: 1 1 100px; }
-
-      /* Map height */
       #map-el { height: 55vh; min-height: 280px; }
-
-      /* Tab bar scrollable */
-      .tab-bar { overflow-x: auto; }
-      .tab-btn { white-space: nowrap; padding: 9px 14px; }
     }
+
+    .mobile-nav { display: none; }
+    .mobile-nav-item {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 3px; cursor: pointer; color: var(--muted); font-size: 9px; font-weight: 500;
+      border: none; background: none; padding: 0;
+    }
+    .mobile-nav-item.active { color: var(--accent); }
+    .mobile-nav-icon { font-size: 18px; line-height: 1; }
   </style>
 </head>
 <body>
 
-<header>
-  <div class="status-dot" id="status-dot"></div>
-  <h1>LogFort</h1>
-  <span class="version" id="version-badge"></span>
-  <div class="spacer"></div>
-  <select id="window-select" onchange="loadAll()">
-    <option value="1h">Last 1h</option>
-    <option value="6h">Last 6h</option>
-    <option value="24h" selected>Last 24h</option>
-    <option value="7d">Last 7d</option>
-    <option value="30d">Last 30d</option>
-    <option value="all">All time</option>
-  </select>
-</header>
-
-<div class="stats-grid">
-  <div class="stat-card"><div class="label">Total Attempts</div><div class="value danger"  id="stat-total">—</div></div>
-  <div class="stat-card"><div class="label">Unique IPs</div><div class="value accent"  id="stat-ips">—</div></div>
-  <div class="stat-card"><div class="label">Failed</div><div class="value danger"  id="stat-failed">—</div></div>
-  <div class="stat-card"><div class="label">Accepted</div><div class="value success" id="stat-accepted">—</div></div>
-  <div class="stat-card"><div class="label">Currently Banned</div><div class="value warn"    id="stat-banned">—</div></div>
-</div>
-
-<div class="chart-wrap">
-  <div class="chart-label">Attempts over time</div>
-  <canvas id="timeline"></canvas>
-</div>
-
-<div class="tab-bar">
-  <button class="tab-btn active" id="tab-events" onclick="switchTab('events')">Events</button>
-  <button class="tab-btn" id="tab-map" onclick="switchTab('map')">Attack Map</button>
-  <button class="tab-btn" id="tab-bans" onclick="switchTab('bans')">Bans<span class="tab-badge" id="bans-badge" style="display:none"></span></button>
-</div>
-
-<div id="section-events">
-<div class="main">
-  <div class="events-panel">
-    <div class="panel-header">
-      <h2>Recent Events</h2>
-      <span id="live-badge" class="live-badge offline">LIVE</span>
-      <span id="event-count" style="color:var(--muted);font-size:11px;margin-left:auto;"></span>
+<!-- ── Sidebar ─────────────────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h1>LogFort</h1>
+    <div class="tagline">SSH intrusion monitor</div>
+  </div>
+  <nav class="sidebar-nav">
+    <button class="nav-item active" onclick="switchSection('dashboard')" id="nav-dashboard">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z"/></svg>
+      Dashboard
+    </button>
+    <button class="nav-item" onclick="switchSection('events')" id="nav-events">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v1.5H2V4zm0 3.5h12V9H2V7.5zm0 3.5h8v1.5H2V11z"/></svg>
+      Events
+    </button>
+    <button class="nav-item" onclick="switchSection('map')" id="nav-map">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zM2 8a6 6 0 1112 0A6 6 0 012 8zm6-4.5c.28 0 .5.22.5.5v4.25l2.5 1.44-.5.87L7.5 9V4c0-.28.22-.5.5-.5z"/></svg>
+      Attack Map
+    </button>
+    <button class="nav-item" onclick="switchSection('bans')" id="nav-bans">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 014 4v1h1.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-11A.5.5 0 012 14.5v-8A.5.5 0 012.5 6H4V5a4 4 0 014-4zm0 1.5A2.5 2.5 0 005.5 5v1h5V5A2.5 2.5 0 008 2.5zm0 6a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>
+      Bans
+      <span class="nav-badge" id="bans-badge" style="display:none"></span>
+    </button>
+    <button class="nav-item" onclick="switchSection('settings')" id="nav-settings">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.5 1a.5.5 0 01.5.5v.77a5.06 5.06 0 011.23.51l.54-.54a.5.5 0 01.71 0l1.04 1.04a.5.5 0 010 .71l-.54.54c.22.39.39.8.51 1.23h.77a.5.5 0 01.5.5v1.47a.5.5 0 01-.5.5h-.77a5.06 5.06 0 01-.51 1.23l.54.54a.5.5 0 010 .71l-1.04 1.04a.5.5 0 01-.71 0l-.54-.54c-.38.22-.79.39-1.23.51v.77a.5.5 0 01-.5.5H6.03a.5.5 0 01-.5-.5v-.77a5.06 5.06 0 01-1.23-.51l-.54.54a.5.5 0 01-.71 0L2.01 10.5a.5.5 0 010-.71l.54-.54A5.06 5.06 0 012.04 8H1.5a.5.5 0 01-.5-.5V6.03a.5.5 0 01.5-.5h.54A5.06 5.06 0 012.55 4.3l-.54-.54a.5.5 0 010-.71L3.05 2.01a.5.5 0 01.71 0l.54.54c.38-.22.79-.39 1.23-.51V1.5a.5.5 0 01.5-.5H7.5zm-.74 1.5H6.27v.65a.5.5 0 01-.38.49 3.58 3.58 0 00-1.47.61.5.5 0 01-.6-.06l-.46-.46-.88.88.46.46a.5.5 0 01.06.6 3.58 3.58 0 00-.61 1.47.5.5 0 01-.49.38H1.5v1.24h.64a.5.5 0 01.49.38c.11.54.32 1.04.61 1.47a.5.5 0 01-.06.6l-.46.46.88.88.46-.46a.5.5 0 01.6-.06c.43.29.93.5 1.47.61a.5.5 0 01.38.49v.64h1.24v-.64a.5.5 0 01.38-.49 3.58 3.58 0 001.47-.61.5.5 0 01.6.06l.46.46.88-.88-.46-.46a.5.5 0 01-.06-.6c.29-.43.5-.93.61-1.47a.5.5 0 01.49-.38h.64V7.27h-.64a.5.5 0 01-.49-.38 3.58 3.58 0 00-.61-1.47.5.5 0 01.06-.6l.46-.46-.88-.88-.46.46a.5.5 0 01-.6.06 3.58 3.58 0 00-1.47-.61.5.5 0 01-.38-.49V2.5zM6.76 5a2.76 2.76 0 110 5.52A2.76 2.76 0 016.76 5zm0 1.5a1.26 1.26 0 100 2.52 1.26 1.26 0 000-2.52z" clip-rule="evenodd"/></svg>
+      Settings
+    </button>
+  </nav>
+  <div class="sidebar-bottom">
+    <div class="status-row">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="version-label">—</span>
     </div>
-    <div id="events-container"><div id="loading">Loading…</div></div>
+    <div style="color:var(--muted);font-size:10px;margin-top:1px;" id="uptime-label"></div>
+  </div>
+</aside>
+
+<!-- ── Main area ───────────────────────────────────────────────────────────── -->
+<div class="main-area">
+  <div class="topbar">
+    <span class="topbar-title" id="topbar-title">Dashboard</span>
+    <div class="spacer"></div>
+    <span id="live-badge" class="live-badge offline">LIVE</span>
+    <select id="window-select" onchange="loadAll()">
+      <option value="1h">Last 1h</option>
+      <option value="6h">Last 6h</option>
+      <option value="24h" selected>Last 24h</option>
+      <option value="7d">Last 7d</option>
+      <option value="30d">Last 30d</option>
+      <option value="all">All time</option>
+    </select>
   </div>
 
-  <div class="sidebar">
-    <ul class="top-list" id="top-ips"><li class="section-title">Top Attacker IPs</li></ul>
-    <ul class="top-list" id="top-usernames"><li class="section-title">Top Usernames</li></ul>
-    <ul class="top-list" id="top-countries"><li class="section-title">Top Countries</li></ul>
-  </div>
-</div>
-</div><!-- /section-events -->
+  <div class="content" id="content">
 
-<div id="section-bans">
-  <div class="bans-toolbar">
-    <h2>Banned IPs</h2>
-    <span id="bans-count" style="color:var(--muted);font-size:11px;"></span>
-    <label>
-      <input type="checkbox" id="bans-active-only" checked onchange="loadBans()">
-      Active only
-    </label>
-    <div id="manual-ban-form" class="manual-ban-form" style="display:none;">
-      <input type="text" id="ban-ip-input" placeholder="IP address" style="width:140px;">
-      <input type="text" id="ban-reason-input" placeholder="Reason" style="width:120px;">
-      <button class="btn-action btn-ban" onclick="banIPManual()">Ban</button>
+    <!-- ── Dashboard ──────────────────────────────────────────────────────── -->
+    <div id="section-dashboard">
+      <div class="stats-strip">
+        <div class="stat-card"><div class="stat-label">Attempts</div><div class="stat-val danger" id="stat-total">—</div></div>
+        <div class="stat-card"><div class="stat-label">Unique IPs</div><div class="stat-val accent" id="stat-ips">—</div></div>
+        <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-val danger" id="stat-failed">—</div></div>
+        <div class="stat-card"><div class="stat-label">Accepted</div><div class="stat-val success" id="stat-accepted">—</div></div>
+        <div class="stat-card"><div class="stat-label">Banned</div><div class="stat-val warn" id="stat-banned">—</div></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-label">Attempts over time</div>
+        <canvas id="timeline"></canvas>
+      </div>
+      <div class="dash-grid" style="height: calc(100vh - 56px - 88px - 72px - 2px);">
+        <div class="panel" style="border-right: 1px solid var(--border);">
+          <div class="panel-hd">
+            Recent Events
+            <span class="ml" id="event-count" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;"></span>
+          </div>
+          <div class="panel-body" id="events-container"><div class="empty-state">Loading…</div></div>
+        </div>
+        <div class="panel top-sidebar">
+          <div class="panel-body">
+            <ul class="top-list" id="top-ips"><li class="top-list-hd">Top Attacker IPs</li></ul>
+            <ul class="top-list" id="top-usernames"><li class="top-list-hd">Top Usernames</li></ul>
+            <ul class="top-list" id="top-countries"><li class="top-list-hd">Top Countries</li></ul>
+          </div>
+        </div>
+      </div>
+    </div><!-- /dashboard -->
+
+    <!-- ── Events ─────────────────────────────────────────────────────────── -->
+    <div id="section-events">
+      <div class="section-toolbar">
+        <h2>Events</h2>
+        <span id="events-total-label" style="color:var(--muted);font-size:11px;"></span>
+      </div>
+      <div class="full-table-wrap" id="events-full-container"><div class="empty-state">Loading…</div></div>
     </div>
-  </div>
-  <div class="bans-table-wrap">
-    <div id="bans-container"><div id="loading">Loading…</div></div>
-  </div>
-</div>
 
-<div id="section-map">
-  <div style="position:relative;">
-    <div id="map-el"></div>
-    <div id="map-empty">No geo data in this window.<br>Make sure a GeoIP database is configured.</div>
-    <div class="map-legend">
-      Attack volume
-      <div class="leg-row"><div class="dot" style="width:8px;height:8px;"></div> 1–9</div>
-      <div class="leg-row"><div class="dot" style="width:14px;height:14px;"></div> 10–99</div>
-      <div class="leg-row"><div class="dot" style="width:20px;height:20px;"></div> 100+</div>
+    <!-- ── Map ────────────────────────────────────────────────────────────── -->
+    <div id="section-map" style="position:relative; height: calc(100vh - 57px - 41px);">
+      <div id="map-el"></div>
+      <div id="map-empty">No geo data in this window.<br>Make sure a GeoIP database is configured.</div>
+      <div class="map-legend">
+        Attack volume
+        <div class="leg-row"><div class="dot" style="width:7px;height:7px;"></div> 1–9</div>
+        <div class="leg-row"><div class="dot" style="width:12px;height:12px;"></div> 10–99</div>
+        <div class="leg-row"><div class="dot" style="width:18px;height:18px;"></div> 100+</div>
+      </div>
     </div>
-  </div>
-</div>
+
+    <!-- ── Bans ───────────────────────────────────────────────────────────── -->
+    <div id="section-bans">
+      <div class="section-toolbar">
+        <h2>Banned IPs</h2>
+        <span id="bans-count" style="color:var(--muted);font-size:11px;"></span>
+        <label>
+          <input type="checkbox" id="bans-active-only" checked onchange="loadBans()">
+          Active only
+        </label>
+        <div class="toolbar-right">
+          <div id="manual-ban-form" class="ban-form" style="display:none;">
+            <input type="text" id="ban-ip-input" placeholder="IP address" style="width:140px;">
+            <input type="text" id="ban-reason-input" placeholder="Reason (optional)" style="width:130px;">
+            <button class="btn btn-danger" onclick="banIPManual()">Ban</button>
+          </div>
+        </div>
+      </div>
+      <div class="full-table-wrap">
+        <div id="bans-container"><div class="empty-state">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Settings ───────────────────────────────────────────────────────── -->
+    <div id="section-settings">
+      <div class="settings-body">
+        <div class="settings-grid">
+
+          <!-- Telegram -->
+          <div class="settings-card">
+            <div class="settings-card-hd">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent)"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.04 9.607c-.15.67-.54.835-1.094.52l-3-2.21-1.447 1.393c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.332-.373-.12l-6.871 4.326-2.962-.924c-.643-.202-.657-.643.136-.953l11.566-4.46c.537-.194 1.006.13.917.602z"/></svg>
+              <h3>Telegram</h3>
+              <span class="notifier-status" id="tg-status-badge">inactive</span>
+            </div>
+            <div class="settings-fields">
+              <div class="field-group">
+                <label>Bot Token</label>
+                <div class="field-row">
+                  <input type="password" id="tg-token" placeholder="1234567890:ABCdef…" autocomplete="off">
+                  <button class="btn btn-muted" onclick="togglePwd('tg-token')" style="flex-shrink:0;padding:6px 8px;font-size:10px;">show</button>
+                </div>
+              </div>
+              <div class="field-group">
+                <label>Chat ID</label>
+                <input type="text" id="tg-chat" placeholder="-100123456789">
+              </div>
+            </div>
+          </div>
+
+          <!-- Discord -->
+          <div class="settings-card">
+            <div class="settings-card-hd">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:#5865F2"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028 14.09 14.09 0 001.226-1.994.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+              <h3>Discord</h3>
+              <span class="notifier-status" id="discord-status-badge">inactive</span>
+            </div>
+            <div class="settings-fields">
+              <div class="field-group">
+                <label>Webhook URL</label>
+                <input type="text" id="discord-url" placeholder="https://discord.com/api/webhooks/…">
+              </div>
+            </div>
+          </div>
+
+          <!-- Webhook -->
+          <div class="settings-card">
+            <div class="settings-card-hd">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--muted)"><path d="M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v7a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 013 11.5v-7zM4.5 4a.5.5 0 00-.5.5v7a.5.5 0 00.5.5h7a.5.5 0 00.5-.5v-7a.5.5 0 00-.5-.5h-7z"/><path d="M6 7.5a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3A.5.5 0 016 7.5zm0 2a.5.5 0 01.5-.5h1.5a.5.5 0 010 1H6.5A.5.5 0 016 9.5z"/></svg>
+              <h3>Webhook</h3>
+              <span class="notifier-status" id="webhook-status-badge">inactive</span>
+            </div>
+            <div class="settings-fields">
+              <div class="field-group">
+                <label>URL (receives POST JSON)</label>
+                <input type="text" id="webhook-url" placeholder="https://yourserver.com/hook">
+              </div>
+            </div>
+          </div>
+
+          <!-- Rules -->
+          <div class="settings-card wide">
+            <div class="settings-card-hd">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--warn)"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3.25a.75.75 0 01-1.5 0V5zm.75 6a1 1 0 110-2 1 1 0 010 2z"/></svg>
+              <h3>Alert Rules</h3>
+            </div>
+            <div class="settings-fields">
+              <div class="rules-grid">
+                <label class="rule-item">
+                  <input type="checkbox" id="rule-ban">
+                  <div class="rule-desc">Ban event<small>Alert when an IP is banned</small></div>
+                </label>
+                <label class="rule-item">
+                  <input type="checkbox" id="rule-accepted">
+                  <div class="rule-desc">Accepted login<small>Alert on successful SSH login</small></div>
+                </label>
+                <label class="rule-item">
+                  <input type="checkbox" id="rule-country">
+                  <div class="rule-desc">New country<small>Alert on first login from a new country</small></div>
+                </label>
+                <label class="rule-item">
+                  <input type="checkbox" id="rule-threshold">
+                  <div class="rule-desc">
+                    <div class="threshold-row">
+                      Threshold:
+                      <input type="number" id="threshold-n" value="100" min="1">
+                      <span>events per</span>
+                      <select id="threshold-dur">
+                        <option value="15m">15m</option>
+                        <option value="1h" selected>1h</option>
+                        <option value="6h">6h</option>
+                        <option value="24h">24h</option>
+                      </select>
+                    </div>
+                    <small>Alert when single IP exceeds N events in window</small>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /settings-grid -->
+
+        <div class="settings-actions">
+          <button class="btn btn-success" onclick="testNotify()" id="btn-test">Test Notification</button>
+          <button class="btn btn-primary" onclick="saveSettings()" id="btn-save">Save Settings</button>
+          <span class="settings-status" id="settings-status"></span>
+        </div>
+      </div>
+    </div><!-- /settings -->
+
+  </div><!-- /content -->
+</div><!-- /main-area -->
+
+<!-- Mobile bottom nav -->
+<nav class="mobile-nav">
+  <button class="mobile-nav-item active" onclick="switchSection('dashboard')" id="mnav-dashboard">
+    <span class="mobile-nav-icon">⊞</span>Dash
+  </button>
+  <button class="mobile-nav-item" onclick="switchSection('events')" id="mnav-events">
+    <span class="mobile-nav-icon">≡</span>Events
+  </button>
+  <button class="mobile-nav-item" onclick="switchSection('map')" id="mnav-map">
+    <span class="mobile-nav-icon">◎</span>Map
+  </button>
+  <button class="mobile-nav-item" onclick="switchSection('bans')" id="mnav-bans">
+    <span class="mobile-nav-icon">⊗</span>Bans
+  </button>
+  <button class="mobile-nav-item" onclick="switchSection('settings')" id="mnav-settings">
+    <span class="mobile-nav-icon">⚙</span>Settings
+  </button>
+</nav>
 
 <script src="/leaflet.min.js"></script>
 <script src="/topojson-client.min.js"></script>
 <script>
-  const fmt = n => n?.toLocaleString() ?? '—';
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+'use strict';
 
-  let responderEnabled = false;
+const fmt = n => (n == null ? '—' : Number(n).toLocaleString());
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  function badgeClass(t) {
-    if (t === 'accepted') return 'badge-accepted';
-    if (t === 'ban')      return 'badge-ban';
-    if (t === 'unban')    return 'badge-unban';
-    return t ? 'badge-failed' : 'badge-other';
+let responderEnabled = false;
+let currentSection = 'dashboard';
+
+// ── Section switching ───────────────────────────────────────────────────────
+const SECTIONS = ['dashboard', 'events', 'map', 'bans', 'settings'];
+const SECTION_TITLES = { dashboard:'Dashboard', events:'Events', map:'Attack Map', bans:'Bans', settings:'Settings' };
+
+function switchSection(s) {
+  currentSection = s;
+  SECTIONS.forEach(id => {
+    const el = document.getElementById('section-' + id);
+    if (el) el.style.display = id === s ? (id === 'settings' ? 'flex' : 'block') : 'none';
+    const nb = document.getElementById('nav-' + id);
+    if (nb) nb.classList.toggle('active', id === s);
+    const mb = document.getElementById('mnav-' + id);
+    if (mb) mb.classList.toggle('active', id === s);
+  });
+  document.getElementById('topbar-title').textContent = SECTION_TITLES[s] || s;
+  const wsel = document.getElementById('window-select');
+  wsel.style.display = s === 'settings' ? 'none' : '';
+
+  if (s === 'map') {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      leafletMap?.invalidateSize();
+      loadMap();
+    }));
   }
+  if (s === 'bans') loadBans();
+  if (s === 'events') loadEventsPage();
+  if (s === 'settings') loadSettings();
+}
 
-  function fmtTS(unix) {
-    const d = new Date(unix * 1000);
-    return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})
-      + ' ' + d.toLocaleDateString([], {month:'short', day:'numeric'});
+// ── Timeline ────────────────────────────────────────────────────────────────
+function drawTimeline(buckets) {
+  const canvas = document.getElementById('timeline');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth, H = 56;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  if (!buckets?.length) {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
+    ctx.font = '11px system-ui'; ctx.fillText('No data', 8, H/2 + 4); return;
   }
+  const max = Math.max(...buckets.map(b => b.count), 1);
+  const gap = 2;
+  const barW = Math.max(2, Math.floor((W - gap * buckets.length) / buckets.length));
+  const offX = Math.max(0, (W - (barW + gap) * buckets.length) / 2);
+  buckets.forEach((b, i) => {
+    const barH = Math.max(2, Math.round((b.count / max) * (H - 4)));
+    ctx.fillStyle = b.count > 0 ? '#f85149' : '#30363d';
+    ctx.beginPath();
+    ctx.roundRect(offX + i * (barW + gap), H - barH, barW, barH, 2);
+    ctx.fill();
+  });
+}
 
-  // ── Timeline bar chart ──────────────────────────────────────────────────
-  function drawTimeline(buckets) {
-    const canvas = document.getElementById('timeline');
-    const dpr = window.devicePixelRatio || 1;
-    const W = canvas.offsetWidth, H = 64;
-    canvas.width  = W * dpr;
-    canvas.height = H * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
+// ── Stats ───────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const w = document.getElementById('window-select').value;
+  try {
+    const d = await fetch('/api/stats?window=' + w).then(r => r.json());
+    document.getElementById('stat-total').textContent    = fmt(d.total_attempts);
+    document.getElementById('stat-ips').textContent      = fmt(d.unique_ips);
+    document.getElementById('stat-failed').textContent   = fmt(d.failed);
+    document.getElementById('stat-accepted').textContent = fmt(d.accepted);
+    document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
+    drawTimeline(d.timeline);
+    renderTopList('top-ips', 'Top Attacker IPs', d.top_ips,
+      t => `<span class="name ip">${esc(t.ip)}</span>`, t => t.count);
+    renderTopList('top-usernames', 'Top Usernames', d.top_usernames,
+      t => `<span class="name user">${esc(t.username)}</span>`, t => t.count);
+    renderTopList('top-countries', 'Top Countries', d.top_countries,
+      t => `<span class="name">${esc(t.country || '—')}</span>`, t => t.count);
+  } catch(e) { console.error('stats', e); }
+}
 
-    if (!buckets || buckets.length === 0) {
-      ctx.fillStyle = 'var(--muted)';
-      ctx.font = '11px system-ui';
-      ctx.fillText('No data', 8, H / 2 + 4);
-      return;
-    }
+function renderTopList(id, title, items, labelFn, countFn) {
+  const ul = document.getElementById(id);
+  ul.innerHTML = `<li class="top-list-hd">${title}</li>`;
+  (items || []).forEach(t => {
+    const li = document.createElement('li');
+    li.className = 'entry';
+    li.innerHTML = labelFn(t) + `<span class="top-cnt">${fmt(countFn(t))}</span>`;
+    ul.appendChild(li);
+  });
+}
 
-    const max = Math.max(...buckets.map(b => b.count), 1);
-    const gap = 2;
-    const barW = Math.max(2, Math.floor((W - gap * buckets.length) / buckets.length));
-    const totalW = (barW + gap) * buckets.length;
-    const offsetX = Math.max(0, (W - totalW) / 2);
+// ── Events (dashboard mini-table) ───────────────────────────────────────────
+function badgeClass(t) {
+  if (t === 'accepted') return 'badge-accepted';
+  if (t === 'ban')      return 'badge-ban';
+  if (t === 'unban')    return 'badge-unban';
+  return t ? 'badge-failed' : 'badge-other';
+}
 
-    buckets.forEach((b, i) => {
-      const barH = Math.max(2, Math.round((b.count / max) * (H - 4)));
-      const x = offsetX + i * (barW + gap);
-      const y = H - barH;
-      ctx.fillStyle = b.count > 0 ? '#f87171' : '#2a2d3a';
-      ctx.beginPath();
-      ctx.roundRect(x, y, barW, barH, 2);
-      ctx.fill();
-    });
+function fmtTS(unix) {
+  const d = new Date(unix * 1000);
+  return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})
+    + ' ' + d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+
+function eventRowHTML(e, id) {
+  const banBtn = (responderEnabled && e.event_type !== 'ban' && e.event_type !== 'unban')
+    ? `<button class="btn btn-danger" style="padding:2px 7px;font-size:10px;" onclick="banIP('${esc(e.ip)}','')">Ban</button>`
+    : '';
+  return `<tr>
+    <td class="ts">${fmtTS(e.ts)}</td>
+    <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
+    <td class="ip">${esc(e.ip)}</td>
+    <td class="geo">${esc(e.country || '')}</td>
+    <td class="user">${esc(e.username || '')}</td>
+    <td style="color:var(--muted)">${e.port || ''}</td>
+    <td class="geo">${esc(e.source)}</td>
+    ${responderEnabled ? `<td>${banBtn}</td>` : ''}
+  </tr>`;
+}
+
+function eventsTable(events, id) {
+  const ac = responderEnabled ? '<th></th>' : '';
+  return `<table id="${id}"><thead><tr>
+    <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th>${ac}
+  </tr></thead><tbody>${events.map(e => eventRowHTML(e)).join('')}</tbody></table>`;
+}
+
+async function loadDashboardEvents() {
+  const w = document.getElementById('window-select').value;
+  const wSecs = { '1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000 };
+  const since = wSecs[w] ? '&since=' + (Math.floor(Date.now()/1000) - wSecs[w]) : '';
+  try {
+    const d = await fetch('/api/events?limit=100' + since).then(r => r.json());
+    const events = d.events || [];
+    document.getElementById('event-count').textContent = d.total ? `${fmt(d.total)} total` : '';
+    const el = document.getElementById('events-container');
+    if (!events.length) { el.innerHTML = '<div class="empty-state">No events in this window.</div>'; return; }
+    el.innerHTML = eventsTable(events, 'dash-events-table');
+  } catch(e) {
+    document.getElementById('events-container').innerHTML = `<div class="error-msg">${esc(String(e))}</div>`;
   }
+}
 
-  // ── Stats + sidebar ─────────────────────────────────────────────────────
-  async function loadStats() {
-    const w = document.getElementById('window-select').value;
+// ── Events full page ─────────────────────────────────────────────────────────
+async function loadEventsPage() {
+  const w = document.getElementById('window-select').value;
+  const wSecs = { '1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000 };
+  const since = wSecs[w] ? '&since=' + (Math.floor(Date.now()/1000) - wSecs[w]) : '';
+  const el = document.getElementById('events-full-container');
+  try {
+    const d = await fetch('/api/events?limit=500' + since).then(r => r.json());
+    const events = d.events || [];
+    document.getElementById('events-total-label').textContent = d.total ? `${fmt(d.total)} total` : '';
+    if (!events.length) { el.innerHTML = '<div class="empty-state">No events in this window.</div>'; return; }
+    el.innerHTML = eventsTable(events, 'events-table');
+  } catch(e) { el.innerHTML = `<div class="error-msg">${esc(String(e))}</div>`; }
+}
+
+// ── Health ───────────────────────────────────────────────────────────────────
+async function loadHealth() {
+  try {
+    const d = await fetch('/api/health').then(r => r.json());
+    document.getElementById('version-label').textContent = 'v' + (d.version || '?');
+    document.getElementById('uptime-label').textContent = 'up ' + fmtDuration(d.uptime_s || 0);
+    document.getElementById('status-dot').style.background = 'var(--success)';
+    responderEnabled = d.responder_enabled === true;
+    const mf = document.getElementById('manual-ban-form');
+    if (mf) mf.style.display = responderEnabled ? 'flex' : 'none';
+  } catch {
+    document.getElementById('status-dot').style.background = 'var(--danger)';
+  }
+}
+
+// ── SSE ─────────────────────────────────────────────────────────────────────
+function connectSSE() {
+  const badge = document.getElementById('live-badge');
+  const es = new EventSource('/api/stream');
+  es.onopen = () => { badge.className = 'live-badge'; };
+  es.onerror = () => { badge.className = 'live-badge offline'; };
+  es.onmessage = e => {
     try {
-      const d = await fetch('/api/stats?window=' + w).then(r => r.json());
-      document.getElementById('stat-total').textContent    = fmt(d.total_attempts);
-      document.getElementById('stat-ips').textContent      = fmt(d.unique_ips);
-      document.getElementById('stat-failed').textContent   = fmt(d.failed);
-      document.getElementById('stat-accepted').textContent = fmt(d.accepted);
-      document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
-
-      drawTimeline(d.timeline);
-
-      renderTopList('top-ips', 'Top Attacker IPs', d.top_ips,
-        t => `<span class="name ip">${esc(t.ip)}</span>`, t => t.count);
-      renderTopList('top-usernames', 'Top Usernames', d.top_usernames,
-        t => `<span class="name user">${esc(t.username)}</span>`, t => t.count);
-      renderTopList('top-countries', 'Top Countries', d.top_countries,
-        t => `<span class="name">${esc(t.country || '—')}</span>`, t => t.count);
-    } catch (e) { console.error('stats', e); }
-  }
-
-  function renderTopList(id, title, items, labelFn, countFn) {
-    const ul = document.getElementById(id);
-    ul.innerHTML = `<li class="section-title">${title}</li>`;
-    (items || []).forEach(t => {
-      const li = document.createElement('li');
-      li.innerHTML = labelFn(t) + `<span class="count">${fmt(countFn(t))}</span>`;
-      ul.appendChild(li);
-    });
-  }
-
-  // ── Events table ────────────────────────────────────────────────────────
-  async function loadEvents() {
-    const w = document.getElementById('window-select').value;
-    const windowSecs = { '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
-    const since = windowSecs[w] ? '&since=' + (Math.floor(Date.now()/1000) - windowSecs[w]) : '';
-    try {
-      const d = await fetch('/api/events?limit=200' + since).then(r => r.json());
-      const events = d.events || [];
-      document.getElementById('event-count').textContent = d.total ? `${fmt(d.total)} total` : '';
-
-      if (!events.length) {
-        document.getElementById('events-container').innerHTML =
-          '<div id="loading" style="color:var(--muted)">No events in this window.</div>';
-        return;
-      }
-
-      const actionCol = responderEnabled ? '<th></th>' : '';
-      const rows = events.map(e => {
-        const banBtn = (responderEnabled && e.event_type !== 'ban' && e.event_type !== 'unban')
-          ? `<button class="btn-action btn-ban" onclick="banIP('${esc(e.ip)}','')">Ban</button>`
-          : '';
-        return `<tr>
-          <td class="ts">${fmtTS(e.ts)}</td>
-          <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
-          <td class="ip">${esc(e.ip)}</td>
-          <td class="country">${esc(e.country || '')}</td>
-          <td class="user">${esc(e.username || '')}</td>
-          <td>${e.port || ''}</td>
-          <td>${esc(e.source)}</td>
-          ${responderEnabled ? `<td>${banBtn}</td>` : ''}
-        </tr>`;
-      }).join('');
-
-      document.getElementById('events-container').innerHTML = `<table>
-        <thead><tr>
-          <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th>${actionCol}
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-    } catch (e) {
-      document.getElementById('events-container').innerHTML =
-        `<div class="error-msg">Error loading events: ${esc(String(e))}</div>`;
-    }
-  }
-
-  async function loadHealth() {
-    try {
-      const d = await fetch('/api/health').then(r => r.json());
-      document.getElementById('version-badge').textContent = 'v' + (d.version || '?');
-      document.getElementById('status-dot').style.background = 'var(--success)';
-      responderEnabled = d.responder_enabled === true;
-      const mf = document.getElementById('manual-ban-form');
-      if (mf) mf.style.display = responderEnabled ? 'flex' : 'none';
-    } catch { document.getElementById('status-dot').style.background = 'var(--danger)'; }
-  }
-
-  // ── Ban / Unban ─────────────────────────────────────────────────────────
-  async function banIP(ip, reason) {
-    if (!confirm(`Ban ${ip}?`)) return false;
-    try {
-      const r = await fetch('/api/ban', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ip, reason: reason || 'manual'}),
-      });
-      const d = await r.json();
-      if (!r.ok) { alert('Ban failed: ' + (d.error || r.status)); return false; }
-      loadBans();
-      loadAll();
-      return true;
-    } catch (e) { alert('Ban error: ' + e); return false; }
-  }
-
-  async function unbanIP(ip) {
-    if (!confirm(`Unban ${ip}?`)) return;
-    try {
-      const r = await fetch('/api/unban', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ip}),
-      });
-      const d = await r.json();
-      if (!r.ok) { alert('Unban failed: ' + (d.error || r.status)); return; }
-      loadBans();
-      loadAll();
-    } catch (e) { alert('Unban error: ' + e); }
-  }
-
-  async function banIPManual() {
-    const ip = document.getElementById('ban-ip-input').value.trim();
-    const reason = document.getElementById('ban-reason-input').value.trim();
-    if (!ip) { alert('Enter an IP address'); return; }
-    const ok = await banIP(ip, reason);
-    if (ok) {
-      document.getElementById('ban-ip-input').value = '';
-      document.getElementById('ban-reason-input').value = '';
-    }
-  }
-
-  function loadAll() {
-    loadStats();
-    loadEvents();
-    // Always refresh bans badge even when not on bans tab.
-    loadBansBadge();
-  }
-
-  async function loadBansBadge() {
-    try {
-      const d = await fetch('/api/bans?active=true').then(r => r.json());
-      const count = (d.bans || []).length;
-      const badge = document.getElementById('bans-badge');
-      if (count > 0) {
-        badge.textContent = count;
-        badge.style.display = '';
-      } else {
-        badge.style.display = 'none';
-      }
+      const ev = JSON.parse(e.data);
+      prependLiveEvent(ev);
     } catch {}
-  }
+  };
+}
 
-  // ── SSE Live Feed ───────────────────────────────────────────────────────
-  function eventRow(ev, cssClass) {
-    return `<tr class="${cssClass || ''}">
-      <td class="ts">${fmtTS(ev.ts)}</td>
-      <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
-      <td class="ip">${esc(ev.ip)}</td>
-      <td class="country">${esc(ev.country || '')}</td>
-      <td class="user">${esc(ev.username || '')}</td>
-      <td>${ev.port || ''}</td>
-      <td>${esc(ev.source)}</td>
-    </tr>`;
-  }
+function prependLiveEvent(ev) {
+  const tbody = document.querySelector('#dash-events-table tbody');
+  if (!tbody) return;
+  const row = document.createElement('tr');
+  row.className = 'live-row';
+  row.innerHTML = `
+    <td class="ts">${fmtTS(ev.ts)}</td>
+    <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
+    <td class="ip">${esc(ev.ip)}</td>
+    <td class="geo">${esc(ev.country || '')}</td>
+    <td class="user">${esc(ev.username || '')}</td>
+    <td style="color:var(--muted)">${ev.port || ''}</td>
+    <td class="geo">${esc(ev.source)}</td>`;
+  tbody.insertBefore(row, tbody.firstChild);
+  while (tbody.rows.length > 100) tbody.deleteRow(tbody.rows.length - 1);
+}
 
-  function prependLiveEvent(ev) {
-    const tbody = document.querySelector('#events-container tbody');
-    if (!tbody) return; // table not rendered yet (initial load pending)
-    const row = document.createElement('tr');
-    row.className = 'live-row';
-    row.innerHTML = `
-      <td class="ts">${fmtTS(ev.ts)}</td>
-      <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
-      <td class="ip">${esc(ev.ip)}</td>
-      <td class="country">${esc(ev.country || '')}</td>
-      <td class="user">${esc(ev.username || '')}</td>
-      <td>${ev.port || ''}</td>
-      <td>${esc(ev.source)}</td>`;
-    tbody.insertBefore(row, tbody.firstChild);
-    while (tbody.rows.length > 200) tbody.deleteRow(tbody.rows.length - 1);
-  }
-
-  function connectSSE() {
-    const badge = document.getElementById('live-badge');
-    const es = new EventSource('/api/stream');
-
-    es.onopen = () => { badge.className = 'live-badge'; };
-    es.onerror = () => { badge.className = 'live-badge offline'; };
-    es.onmessage = e => {
-      try { prependLiveEvent(JSON.parse(e.data)); } catch {}
-    };
-  }
-
-  // ── Bans table ──────────────────────────────────────────────────────────
-  async function loadBans() {
-    const activeOnly = document.getElementById('bans-active-only').checked;
-    try {
-      const d = await fetch('/api/bans?active=' + (activeOnly ? 'true' : 'false')).then(r => r.json());
-      const bans = d.bans || [];
-
-      const badge = document.getElementById('bans-badge');
-      const activeBans = bans.filter(b => b.active);
-      if (activeBans.length > 0) {
-        badge.textContent = activeBans.length;
-        badge.style.display = '';
-      } else {
-        badge.style.display = 'none';
-      }
-
-      document.getElementById('bans-count').textContent = bans.length
-        ? `${fmt(bans.length)} record${bans.length === 1 ? '' : 's'}`
-        : '';
-
-      if (!bans.length) {
-        document.getElementById('bans-container').innerHTML =
-          '<div id="loading" style="color:var(--muted)">No ban records found.</div>';
-        return;
-      }
-
-      const actionCol = responderEnabled ? '<th></th>' : '';
-      const rows = bans.map(b => {
-        const bannedAt = fmtTS(b.banned_at);
-        const duration = b.unbanned_at
-          ? fmtDuration(b.unbanned_at - b.banned_at)
-          : fmtDuration(Math.floor(Date.now() / 1000) - b.banned_at);
-        const statusCls = b.active ? 'ban-active' : 'ban-inactive';
-        const statusTxt = b.active ? 'ACTIVE' : 'EXPIRED';
-        const unbanBtn = (responderEnabled && b.active)
-          ? `<button class="btn-action btn-unban" onclick="unbanIP('${esc(b.ip)}')">Unban</button>`
-          : '';
-        return `<tr>
-          <td class="ip">${esc(b.ip)}</td>
-          <td>${esc(b.jail || '—')}</td>
-          <td class="ts">${bannedAt}</td>
-          <td style="color:var(--muted);font-size:11px;">${duration}</td>
-          <td><span class="badge ${b.active ? 'badge-ban' : 'badge-unban'} ${statusCls}">${statusTxt}</span></td>
-          <td style="color:var(--muted);font-size:11px;">${esc(b.source)}</td>
-          ${responderEnabled ? `<td>${unbanBtn}</td>` : ''}
-        </tr>`;
-      }).join('');
-
-      document.getElementById('bans-container').innerHTML = `<table>
-        <thead><tr>
-          <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Status</th><th>Source</th>${actionCol}
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-    } catch (e) {
-      document.getElementById('bans-container').innerHTML =
-        `<div class="error-msg">Error loading bans: ${esc(String(e))}</div>`;
-    }
-  }
-
-  function fmtDuration(secs) {
-    if (secs < 60)   return secs + 's';
-    if (secs < 3600) return Math.floor(secs / 60) + 'm';
-    if (secs < 86400) return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
-    return Math.floor(secs / 86400) + 'd ' + Math.floor((secs % 86400) / 3600) + 'h';
-  }
-
-  // ── Tab switching ───────────────────────────────────────────────────────
-  let currentTab = 'events';
-
-  function switchTab(tab) {
-    currentTab = tab;
-    document.getElementById('section-events').style.display = tab === 'events' ? 'block' : 'none';
-    document.getElementById('section-map').style.display    = tab === 'map'    ? 'block' : 'none';
-    document.getElementById('section-bans').style.display   = tab === 'bans'   ? 'block' : 'none';
-    document.getElementById('tab-events').classList.toggle('active', tab === 'events');
-    document.getElementById('tab-map').classList.toggle('active', tab === 'map');
-    document.getElementById('tab-bans').classList.toggle('active', tab === 'bans');
-    if (tab === 'map') {
-      // Double rAF ensures browser has laid out the container before Leaflet measures it.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        leafletMap?.invalidateSize();
-        loadMap();
-      }));
-    }
-    if (tab === 'bans') loadBans();
-  }
-
-  // ── Leaflet attack map ──────────────────────────────────────────────────
-  let leafletMap = null;
-  let topoData   = null;
-  let markersLayer = null;
-
-  // Split a polygon ring at antimeridian jumps (|Δlng| > 180).
-  // Returns an array of closed rings.
-  //
-  // Russia (arc 161) has TWO jumps → 3 segments [A, B, C].
-  // A and C are both parts of the main Russian body; closing them
-  // independently creates long diagonal stripes. Fix: merge first+last
-  // segments into one ring, keep inner segments (Chukotka) separate.
-  function splitRing(ring) {
-    const open = ring.slice(0, ring.length - 1);
-    const segs = [[]];
-    for (const pt of open) {
-      const seg = segs[segs.length - 1];
-      if (seg.length > 0 && Math.abs(pt[0] - seg[seg.length - 1][0]) > 180) {
-        segs.push([]);
-      }
-      segs[segs.length - 1].push(pt);
-    }
-
-    if (segs.length === 1) return segs[0].length >= 3 ? [[...segs[0], segs[0][0]]] : [];
-    if (segs.length === 2) return segs.filter(s => s.length >= 3).map(s => [...s, s[0]]);
-
-    // 3+ segments: first and last are the same continuous piece that was
-    // interrupted by inner segments crossing the antimeridian. Merge them.
-    const merged = [...segs[segs.length - 1], ...segs[0]];
-    const inner  = segs.slice(1, -1);
-    return [merged, ...inner].filter(s => s.length >= 3).map(s => [...s, s[0]]);
-  }
-
-  // Split a LineString at antimeridian jumps.
-  function splitLine(coords) {
-    const segs = [[]];
-    for (const pt of coords) {
-      const seg = segs[segs.length - 1];
-      if (seg.length > 0 && Math.abs(pt[0] - seg[seg.length - 1][0]) > 180) {
-        segs.push([]);
-      }
-      segs[segs.length - 1].push(pt);
-    }
-    return segs.filter(s => s.length >= 2);
-  }
-
-  function fixAntimeridian(g) {
-    if (!g) return g;
-    if (g.type === 'Feature')           return { ...g, geometry: fixAntimeridian(g.geometry) };
-    if (g.type === 'FeatureCollection') return { ...g, features: g.features.map(fixAntimeridian) };
-    if (g.type === 'Polygon') {
-      const outers = splitRing(g.coordinates[0]);
-      const holes  = g.coordinates.slice(1).flatMap(splitRing);
-      if (outers.length <= 1)
-        return { type: 'Polygon', coordinates: [outers[0] ?? g.coordinates[0], ...holes] };
-      return { type: 'MultiPolygon',
-        coordinates: [[outers[0], ...holes], ...outers.slice(1).map(r => [r])] };
-    }
-    if (g.type === 'MultiPolygon') {
-      return { type: 'MultiPolygon', coordinates: g.coordinates.flatMap(poly => {
-        const outers = splitRing(poly[0]);
-        const holes  = poly.slice(1).flatMap(splitRing);
-        return outers.length === 0 ? [] :
-          [[outers[0], ...holes], ...outers.slice(1).map(r => [r])];
-      })};
-    }
-    if (g.type === 'MultiLineString')
-      return { type: 'MultiLineString', coordinates: g.coordinates.flatMap(splitLine) };
-    if (g.type === 'LineString')
-      return { type: 'MultiLineString', coordinates: splitLine(g.coordinates) };
-    return g;
-  }
-
-  async function initMap() {
-    delete L.Icon.Default.prototype._getIconUrl;
-
-    leafletMap = L.map('map-el', {
-      center: [20, 0],
-      zoom: 2,
-      minZoom: 1,
-      maxZoom: 8,
-      zoomSnap: 0.5,
-      attributionControl: false,
+// ── Ban / Unban ─────────────────────────────────────────────────────────────
+async function banIP(ip, reason) {
+  if (!confirm(`Ban ${ip}?`)) return false;
+  try {
+    const r = await fetch('/api/ban', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ip, reason: reason || 'manual'}),
     });
+    const d = await r.json();
+    if (!r.ok) { alert('Ban failed: ' + (d.error || r.status)); return false; }
+    loadBans(); loadAll(); return true;
+  } catch(e) { alert('Ban error: ' + e); return false; }
+}
 
-    const resp = await fetch('/countries-110m.json');
-    topoData = await resp.json();
+async function unbanIP(ip) {
+  if (!confirm(`Unban ${ip}?`)) return;
+  try {
+    const r = await fetch('/api/unban', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ip}),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert('Unban failed: ' + (d.error || r.status)); return; }
+    loadBans(); loadAll();
+  } catch(e) { alert('Unban error: ' + e); }
+}
 
-    // Country fills — rings split at antimeridian to prevent cross-screen lines.
-    const countries = topojson.feature(topoData, topoData.objects.countries);
-    countries.features = countries.features.filter(f => f.id != 10);
-    L.geoJSON(fixAntimeridian(countries), {
-      style: { fillColor: '#1e2235', fillOpacity: 1, color: '#2d3350', weight: 0.3 },
-      interactive: false,
-    }).addTo(leafletMap);
+async function banIPManual() {
+  const ip = document.getElementById('ban-ip-input').value.trim();
+  const reason = document.getElementById('ban-reason-input').value.trim();
+  if (!ip) { alert('Enter an IP address'); return; }
+  const ok = await banIP(ip, reason);
+  if (ok) { document.getElementById('ban-ip-input').value = ''; document.getElementById('ban-reason-input').value = ''; }
+}
 
-    // Interior country borders.
-    const borders = topojson.mesh(topoData, topoData.objects.countries, (a, b) => a !== b);
-    L.geoJSON(fixAntimeridian(borders), {
-      style: { fill: false, color: '#3a4060', weight: 0.4 },
-      interactive: false,
-    }).addTo(leafletMap);
+// ── Bans table ───────────────────────────────────────────────────────────────
+async function loadBansBadge() {
+  try {
+    const d = await fetch('/api/bans?active=true').then(r => r.json());
+    const count = (d.bans || []).length;
+    const badge = document.getElementById('bans-badge');
+    if (count > 0) { badge.textContent = count; badge.style.display = ''; }
+    else badge.style.display = 'none';
+  } catch {}
+}
 
-    markersLayer = L.layerGroup().addTo(leafletMap);
+async function loadBans() {
+  const activeOnly = document.getElementById('bans-active-only').checked;
+  const el = document.getElementById('bans-container');
+  try {
+    const d = await fetch('/api/bans?active=' + (activeOnly ? 'true' : 'false')).then(r => r.json());
+    const bans = d.bans || [];
+    const activeBans = bans.filter(b => b.active);
+    const badge = document.getElementById('bans-badge');
+    if (activeBans.length > 0) { badge.textContent = activeBans.length; badge.style.display = ''; }
+    else badge.style.display = 'none';
+    document.getElementById('bans-count').textContent = bans.length ? `${fmt(bans.length)} record${bans.length === 1 ? '' : 's'}` : '';
+    if (!bans.length) { el.innerHTML = '<div class="empty-state">No ban records found.</div>'; return; }
+    const ac = responderEnabled ? '<th></th>' : '';
+    const rows = bans.map(b => {
+      const unbanBtn = (responderEnabled && b.active)
+        ? `<button class="btn btn-muted" style="font-size:10px;" onclick="unbanIP('${esc(b.ip)}')">Unban</button>` : '';
+      const dur = b.unbanned_at
+        ? fmtDuration(b.unbanned_at - b.banned_at)
+        : fmtDuration(Math.floor(Date.now()/1000) - b.banned_at);
+      return `<tr>
+        <td class="ip">${esc(b.ip)}</td>
+        <td style="color:var(--muted);font-size:11px;">${esc(b.jail || '—')}</td>
+        <td class="ts">${fmtTS(b.banned_at)}</td>
+        <td style="color:var(--muted);font-size:11px;">${dur}</td>
+        <td><span class="badge ${b.active ? 'badge-ban ban-active' : 'badge-unban ban-inactive'}">${b.active ? 'ACTIVE' : 'EXPIRED'}</span></td>
+        <td style="color:var(--muted);font-size:11px;">${esc(b.source)}</td>
+        ${responderEnabled ? `<td>${unbanBtn}</td>` : ''}
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table id="bans-table"><thead><tr>
+      <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Status</th><th>Source</th>${ac}
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch(e) { el.innerHTML = `<div class="error-msg">${esc(String(e))}</div>`; }
+}
+
+function fmtDuration(s) {
+  if (s < 60)    return s + 's';
+  if (s < 3600)  return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';
+}
+
+// ── Map ──────────────────────────────────────────────────────────────────────
+let leafletMap = null, topoData = null, markersLayer = null;
+
+function splitRing(ring) {
+  const open = ring.slice(0, ring.length - 1);
+  const segs = [[]];
+  for (const pt of open) {
+    const seg = segs[segs.length - 1];
+    if (seg.length > 0 && Math.abs(pt[0] - seg[seg.length-1][0]) > 180) segs.push([]);
+    segs[segs.length-1].push(pt);
   }
-
-  function attackRadius(count) {
-    if (count >= 100) return 12;
-    if (count >= 10)  return 8;
-    return 5;
+  if (segs.length === 1) return segs[0].length >= 3 ? [[...segs[0], segs[0][0]]] : [];
+  if (segs.length === 2) return segs.filter(s => s.length >= 3).map(s => [...s, s[0]]);
+  const merged = [...segs[segs.length-1], ...segs[0]];
+  return [merged, ...segs.slice(1,-1)].filter(s => s.length >= 3).map(s => [...s, s[0]]);
+}
+function splitLine(coords) {
+  const segs = [[]];
+  for (const pt of coords) {
+    const seg = segs[segs.length-1];
+    if (seg.length > 0 && Math.abs(pt[0] - seg[seg.length-1][0]) > 180) segs.push([]);
+    segs[segs.length-1].push(pt);
   }
-
-  async function loadMap() {
-    if (!leafletMap) await initMap();
-
-    const w = document.getElementById('window-select').value;
-    try {
-      const d = await fetch('/api/map?window=' + w).then(r => r.json());
-      const points = d.points || [];
-
-      markersLayer.clearLayers();
-
-      document.getElementById('map-empty').style.display = points.length === 0 ? 'block' : 'none';
-
-      points.forEach(p => {
-        L.circleMarker([p.lat, p.lon], {
-          radius:      attackRadius(p.count),
-          fillColor:   '#f87171',
-          fillOpacity: 0.75,
-          color:       '#ef4444',
-          weight:      1,
-        })
-        .bindPopup(
-          `<b>${esc(p.ip)}</b><br>` +
-          (p.country ? esc(p.country) + '<br>' : '') +
-          `<span style="color:var(--danger);font-weight:600">${fmt(p.count)}</span> attacks`
-        )
-        .addTo(markersLayer);
-      });
-    } catch (e) { console.error('map', e); }
+  return segs.filter(s => s.length >= 2);
+}
+function fixAntimeridian(g) {
+  if (!g) return g;
+  if (g.type === 'Feature')           return {...g, geometry: fixAntimeridian(g.geometry)};
+  if (g.type === 'FeatureCollection') return {...g, features: g.features.map(fixAntimeridian)};
+  if (g.type === 'Polygon') {
+    const outers = splitRing(g.coordinates[0]);
+    const holes  = g.coordinates.slice(1).flatMap(splitRing);
+    if (outers.length <= 1) return {type:'Polygon', coordinates:[outers[0]??g.coordinates[0],...holes]};
+    return {type:'MultiPolygon', coordinates:[[outers[0],...holes],...outers.slice(1).map(r=>[r])]};
   }
+  if (g.type === 'MultiPolygon') return {type:'MultiPolygon', coordinates:g.coordinates.flatMap(poly=>{
+    const outers = splitRing(poly[0]); const holes = poly.slice(1).flatMap(splitRing);
+    return outers.length===0?[]:[[outers[0],...holes],...outers.slice(1).map(r=>[r])];
+  })};
+  if (g.type === 'MultiLineString') return {type:'MultiLineString', coordinates:g.coordinates.flatMap(splitLine)};
+  if (g.type === 'LineString')      return {type:'MultiLineString', coordinates:splitLine(g.coordinates)};
+  return g;
+}
 
-  loadHealth();
-  loadAll();
-  connectSSE();
-  setInterval(loadAll, 30000);
-  setInterval(loadHealth, 30000);
-  window.addEventListener('resize', loadStats);
+async function initMap() {
+  delete L.Icon.Default.prototype._getIconUrl;
+  leafletMap = L.map('map-el', {center:[20,0], zoom:2, minZoom:1, maxZoom:8, zoomSnap:.5, attributionControl:false});
+  const resp = await fetch('/countries-110m.json');
+  topoData = await resp.json();
+  const countries = topojson.feature(topoData, topoData.objects.countries);
+  countries.features = countries.features.filter(f => f.id != 10);
+  L.geoJSON(fixAntimeridian(countries), {
+    style:{fillColor:'#1a2035', fillOpacity:1, color:'#2d3555', weight:.4}, interactive:false,
+  }).addTo(leafletMap);
+  L.geoJSON(fixAntimeridian(topojson.mesh(topoData, topoData.objects.countries, (a,b) => a!==b)), {
+    style:{fill:false, color:'#3a4060', weight:.5}, interactive:false,
+  }).addTo(leafletMap);
+  markersLayer = L.layerGroup().addTo(leafletMap);
+}
+
+async function loadMap() {
+  if (!leafletMap) await initMap();
+  const w = document.getElementById('window-select').value;
+  try {
+    const d = await fetch('/api/map?window=' + w).then(r => r.json());
+    const points = d.points || [];
+    markersLayer.clearLayers();
+    document.getElementById('map-empty').style.display = points.length === 0 ? 'block' : 'none';
+    points.forEach(p => {
+      const r = p.count >= 100 ? 12 : p.count >= 10 ? 8 : 5;
+      L.circleMarker([p.lat, p.lon], {radius:r, fillColor:'#f85149', fillOpacity:.75, color:'#ef4444', weight:1})
+       .bindPopup(`<b>${esc(p.ip)}</b><br>${p.country ? esc(p.country)+'<br>' : ''}<span style="color:var(--danger);font-weight:600">${fmt(p.count)}</span> attacks`)
+       .addTo(markersLayer);
+    });
+  } catch(e) { console.error('map', e); }
+}
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const d = await fetch('/api/settings').then(r => r.json());
+    document.getElementById('tg-token').value    = d.telegram_token   || '';
+    document.getElementById('tg-chat').value     = d.telegram_chat_id || '';
+    document.getElementById('discord-url').value = d.discord_url      || '';
+    document.getElementById('webhook-url').value = d.webhook_url      || '';
+
+    // Status badges
+    setBadge('tg-status-badge', !!(d.telegram_token && d.telegram_chat_id));
+    setBadge('discord-status-badge', !!d.discord_url);
+    setBadge('webhook-status-badge', !!d.webhook_url);
+
+    // Parse rules
+    const rules = (d.rules || '').split(',').map(r => r.trim()).filter(Boolean);
+    document.getElementById('rule-ban').checked      = rules.includes('ban');
+    document.getElementById('rule-accepted').checked = rules.includes('accepted_login');
+    document.getElementById('rule-country').checked  = rules.includes('new_country');
+    const thr = rules.find(r => r.startsWith('threshold:'));
+    if (thr) {
+      document.getElementById('rule-threshold').checked = true;
+      const [, rest] = thr.split(':');
+      const [n, dur] = rest.split('/');
+      document.getElementById('threshold-n').value = n || '100';
+      const durSel = document.getElementById('threshold-dur');
+      if ([...durSel.options].some(o => o.value === dur)) durSel.value = dur;
+    } else {
+      document.getElementById('rule-threshold').checked = false;
+    }
+  } catch(e) { console.error('settings load', e); }
+}
+
+function setBadge(id, active) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = active ? 'active' : 'inactive';
+  el.className = 'notifier-status' + (active ? ' active' : '');
+}
+
+async function saveSettings() {
+  const rules = [];
+  if (document.getElementById('rule-ban').checked)      rules.push('ban');
+  if (document.getElementById('rule-accepted').checked) rules.push('accepted_login');
+  if (document.getElementById('rule-country').checked)  rules.push('new_country');
+  if (document.getElementById('rule-threshold').checked) {
+    const n   = document.getElementById('threshold-n').value || '100';
+    const dur = document.getElementById('threshold-dur').value || '1h';
+    rules.push(`threshold:${n}/${dur}`);
+  }
+  const body = {
+    telegram_token:   document.getElementById('tg-token').value.trim(),
+    telegram_chat_id: document.getElementById('tg-chat').value.trim(),
+    discord_url:      document.getElementById('discord-url').value.trim(),
+    webhook_url:      document.getElementById('webhook-url').value.trim(),
+    rules:            rules.join(','),
+  };
+  const btn = document.getElementById('btn-save');
+  const status = document.getElementById('settings-status');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/settings', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    status.textContent = '✓ Saved'; status.className = 'settings-status ok';
+    setBadge('tg-status-badge', !!(body.telegram_token && body.telegram_chat_id));
+    setBadge('discord-status-badge', !!body.discord_url);
+    setBadge('webhook-status-badge', !!body.webhook_url);
+  } catch(e) {
+    status.textContent = '✗ ' + e.message; status.className = 'settings-status err';
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+}
+
+async function testNotify() {
+  const btn = document.getElementById('btn-test');
+  const status = document.getElementById('settings-status');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/notify/test', {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    status.textContent = '✓ Test sent'; status.className = 'settings-status ok';
+  } catch(e) {
+    status.textContent = '✗ ' + e.message; status.className = 'settings-status err';
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+}
+
+function togglePwd(id) {
+  const el = document.getElementById(id);
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+function loadAll() {
+  loadStats();
+  loadDashboardEvents();
+  loadBansBadge();
+  if (currentSection === 'events') loadEventsPage();
+  if (currentSection === 'map')    loadMap();
+  if (currentSection === 'bans')   loadBans();
+}
+
+// Init: hide all sections except dashboard
+switchSection('dashboard');
+
+loadHealth();
+loadAll();
+connectSSE();
+setInterval(loadAll, 30000);
+setInterval(loadHealth, 60000);
+window.addEventListener('resize', () => { if (currentSection === 'dashboard') loadStats(); });
 </script>
 </body>
 </html>

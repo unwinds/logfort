@@ -483,6 +483,42 @@ func (s *SQLiteStore) CountIPEvents(ctx context.Context, ip string, since time.T
 	return count, err
 }
 
+// GetSetting returns the stored value for key. found is false when absent.
+func (s *SQLiteStore) GetSetting(ctx context.Context, key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
+// SetSetting upserts a key-value pair.
+func (s *SQLiteStore) SetSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+		key, value)
+	return err
+}
+
+// GetAllSettings returns all key-value pairs.
+func (s *SQLiteStore) GetAllSettings(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT key, value FROM settings")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		m[k] = v
+	}
+	return m, rows.Err()
+}
+
 // Close updates query-planner statistics and closes the database.
 func (s *SQLiteStore) Close() error {
 	_, _ = s.db.Exec("PRAGMA optimize")

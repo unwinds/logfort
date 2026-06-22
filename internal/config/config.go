@@ -133,6 +133,32 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// OverlaySettings fills in empty notify fields from a key-value map (e.g. from
+// the DB settings table). Env-var-set values (already non-empty) take priority.
+func (c *Config) OverlaySettings(s map[string]string) {
+	if c.NotifyTelegramToken == "" {
+		c.NotifyTelegramToken = s["notify.telegram.token"]
+	}
+	if c.NotifyTelegramChat == "" {
+		c.NotifyTelegramChat = s["notify.telegram.chat_id"]
+	}
+	if c.NotifyDiscordURL == "" {
+		c.NotifyDiscordURL = s["notify.discord.url"]
+	}
+	if c.NotifyWebhookURL == "" {
+		c.NotifyWebhookURL = s["notify.webhook.url"]
+	}
+	if len(c.NotifyRules) == 0 {
+		if raw := s["notify.rules"]; raw != "" {
+			for _, r := range strings.Split(raw, ",") {
+				if r = strings.TrimSpace(r); r != "" {
+					c.NotifyRules = append(c.NotifyRules, r)
+				}
+			}
+		}
+	}
+}
+
 func getEnv(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok {
 		return v
