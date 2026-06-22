@@ -185,6 +185,59 @@
       border-radius: 10px; font-size: 10px; font-weight: 700;
       background: rgba(251,191,36,.2); color: var(--warn); vertical-align: middle;
     }
+
+    /* ── Mobile adaptive (≤700 px) ──────────────────────────────────────── */
+    @media (max-width: 700px) {
+      header { padding: 10px 14px; }
+
+      .stat-card { padding: 10px 14px; }
+      .stat-card .value { font-size: 20px; }
+
+      /* Stack events + sidebar vertically */
+      .main { grid-template-columns: 1fr; }
+
+      .events-panel {
+        max-height: 55vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+
+      /* Top-lists as a horizontal scroll strip below events */
+      .sidebar {
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        max-height: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      .top-list { flex: 0 0 170px; border-right: 1px solid var(--border); }
+      .top-list li .name { max-width: 120px; }
+
+      /* Events table: hide Port (col 6) and Source (col 7) */
+      #events-container table th:nth-child(6),
+      #events-container table td:nth-child(6),
+      #events-container table th:nth-child(7),
+      #events-container table td:nth-child(7) { display: none; }
+
+      /* Bans table: hide Duration (col 4) */
+      #bans-container table th:nth-child(4),
+      #bans-container table td:nth-child(4) { display: none; }
+
+      .bans-table-wrap { max-height: 55vh; }
+
+      /* Bans toolbar wraps on narrow screens */
+      .bans-toolbar { flex-wrap: wrap; row-gap: 6px; }
+      .bans-toolbar label { margin-left: 0; }
+      .manual-ban-form { margin-left: 0; width: 100%; flex-wrap: wrap; }
+      .manual-ban-form input { flex: 1 1 100px; }
+
+      /* Map height */
+      #map-el { height: 55vh; min-height: 280px; }
+
+      /* Tab bar scrollable */
+      .tab-bar { overflow-x: auto; }
+      .tab-btn { white-space: nowrap; padding: 9px 14px; }
+    }
   </style>
 </head>
 <body>

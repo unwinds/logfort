@@ -51,6 +51,8 @@ func (s *SQLiteStore) applyPragmas() error {
 		"PRAGMA synchronous=NORMAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
+		"PRAGMA cache_size=-65536",  // 64 MB page cache
+		"PRAGMA temp_store=MEMORY",  // sorts/groups in RAM
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("pragma %q: %w", stmt, err)
@@ -472,8 +474,11 @@ func (s *SQLiteStore) CountIPEvents(ctx context.Context, ip string, since time.T
 	return count, err
 }
 
-// Close closes the underlying database connection.
-func (s *SQLiteStore) Close() error { return s.db.Close() }
+// Close updates query-planner statistics and closes the database.
+func (s *SQLiteStore) Close() error {
+	_, _ = s.db.Exec("PRAGMA optimize")
+	return s.db.Close()
+}
 
 // --- helpers ---
 
