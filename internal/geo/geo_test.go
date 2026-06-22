@@ -3,7 +3,7 @@ package geo_test
 import (
 	"testing"
 
-	"github.com/unwinds/sshwatch/internal/geo"
+	"github.com/unwinds/logfort/internal/geo"
 )
 
 func TestNoopLooker(t *testing.T) {

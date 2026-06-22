@@ -13,7 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/unwinds/sshwatch/internal/parse"
+	"github.com/unwinds/logfort/internal/parse"
 )
 
 //go:embed migrations/*.sql

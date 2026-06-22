@@ -21,8 +21,8 @@ import (
 //
 // Reference them in your nftables rules:
 //
-//	nft add rule inet filter input ip  saddr @sshwatch_block  drop
-//	nft add rule inet filter input ip6 saddr @sshwatch_block6 drop
+//	nft add rule inet filter input ip  saddr @logfort_block  drop
+//	nft add rule inet filter input ip6 saddr @logfort_block6 drop
 type NftablesResponder struct {
 	family nftables.TableFamily
 	table  string

@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	webui "github.com/unwinds/sshwatch/web"
-	"github.com/unwinds/sshwatch/internal/config"
-	"github.com/unwinds/sshwatch/internal/parse"
-	"github.com/unwinds/sshwatch/internal/responder"
-	"github.com/unwinds/sshwatch/internal/store"
+	webui "github.com/unwinds/logfort/web"
+	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/parse"
+	"github.com/unwinds/logfort/internal/responder"
+	"github.com/unwinds/logfort/internal/store"
 )
 
 // Server holds API dependencies and implements http.Handler.
@@ -123,7 +123,7 @@ func (s *Server) basicAuth(h http.Handler) http.Handler {
 		userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.AuthUser)) == 1
 		passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.AuthPass)) == 1
 		if !ok || !userMatch || !passMatch {
-			w.Header().Set("WWW-Authenticate", `Basic realm="sshwatch"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="logfort"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -295,7 +295,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.ResponderEnabled {
-		writeError(w, http.StatusForbidden, "responder is disabled; set SSHWATCH_RESPONDER_ENABLED=true to enable")
+		writeError(w, http.StatusForbidden, "responder is disabled; set LOGFORT_RESPONDER_ENABLED=true to enable")
 		return
 	}
 	if !s.banLim.Allow() {
@@ -362,7 +362,7 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.ResponderEnabled {
-		writeError(w, http.StatusForbidden, "responder is disabled; set SSHWATCH_RESPONDER_ENABLED=true to enable")
+		writeError(w, http.StatusForbidden, "responder is disabled; set LOGFORT_RESPONDER_ENABLED=true to enable")
 		return
 	}
 	// Unban is not rate-limited: blocking emergency unbans would be dangerous.

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/unwinds/sshwatch/internal/geo"
-	"github.com/unwinds/sshwatch/internal/parse"
-	"github.com/unwinds/sshwatch/internal/store"
+	"github.com/unwinds/logfort/internal/geo"
+	"github.com/unwinds/logfort/internal/parse"
+	"github.com/unwinds/logfort/internal/store"
 )
 
 // Pipeline connects one or more Sources to the store via a parse worker pool.

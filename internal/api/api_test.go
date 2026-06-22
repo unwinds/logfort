@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/unwinds/sshwatch/internal/api"
-	"github.com/unwinds/sshwatch/internal/config"
-	"github.com/unwinds/sshwatch/internal/parse"
-	"github.com/unwinds/sshwatch/internal/responder"
-	"github.com/unwinds/sshwatch/internal/store"
+	"github.com/unwinds/logfort/internal/api"
+	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/parse"
+	"github.com/unwinds/logfort/internal/responder"
+	"github.com/unwinds/logfort/internal/store"
 )
 
 // mockStore is a minimal in-memory store for API tests.

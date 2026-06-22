@@ -1,4 +1,4 @@
-module github.com/unwinds/sshwatch
+module github.com/unwinds/logfort
 
 go 1.26.4
 

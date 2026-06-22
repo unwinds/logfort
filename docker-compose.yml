@@ -1,7 +1,7 @@
 services:
-  sshwatch:
-    image: ghcr.io/unwinds/sshwatch:latest
-    container_name: sshwatch
+  logfort:
+    image: ghcr.io/unwinds/logfort:latest
+    container_name: logfort
     ports:
       - "127.0.0.1:8080:8080"   # localhost only — do NOT expose to the internet without auth or a reverse proxy
     volumes:
@@ -12,42 +12,42 @@ services:
       - ./data:/data                                  # SQLite database + GeoIP mmdb
     environment:
       # ── Log sources ──────────────────────────────────────────────────────────
-      SSHWATCH_LOG_PATHS: /host/auth.log
+      LOGFORT_LOG_PATHS: /host/auth.log
       # Comma-separated; nginx logs are auto-detected by path keywords:
-      # SSHWATCH_LOG_PATHS: /host/auth.log,/host/nginx_error.log,/host/nginx_access.log
-      # SSHWATCH_FAIL2BAN_LOG: /host/fail2ban.log    # optional fail2ban log
+      # LOGFORT_LOG_PATHS: /host/auth.log,/host/nginx_error.log,/host/nginx_access.log
+      # LOGFORT_FAIL2BAN_LOG: /host/fail2ban.log    # optional fail2ban log
 
       # ── GeoIP (optional) ─────────────────────────────────────────────────────
       # Download DB-IP Lite and place it at ./data/geo.mmdb before starting.
       # curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" | gunzip > ./data/geo.mmdb
-      SSHWATCH_GEOIP_DB: /data/geo.mmdb
+      LOGFORT_GEOIP_DB: /data/geo.mmdb
 
       # ── Database ─────────────────────────────────────────────────────────────
-      SSHWATCH_DB_PATH: /data/sshwatch.db
-      SSHWATCH_RETENTION_DAYS: "90"
+      LOGFORT_DB_PATH: /data/logfort.db
+      LOGFORT_RETENTION_DAYS: "90"
 
       # ── HTTP auth (recommended when exposing beyond localhost) ────────────────
-      # SSHWATCH_AUTH_ENABLED: "true"
-      # SSHWATCH_AUTH_USER: admin
-      # SSHWATCH_AUTH_PASS: changeme
+      # LOGFORT_AUTH_ENABLED: "true"
+      # LOGFORT_AUTH_USER: admin
+      # LOGFORT_AUTH_PASS: changeme
 
       # ── Home marker on the attack map ────────────────────────────────────────
-      # SSHWATCH_HOME_LAT: "52.37"
-      # SSHWATCH_HOME_LON: "4.90"
+      # LOGFORT_HOME_LAT: "52.37"
+      # LOGFORT_HOME_LON: "4.90"
 
       # ── Active banning (disabled by default) ─────────────────────────────────
-      # SSHWATCH_RESPONDER_ENABLED: "true"
-      # SSHWATCH_RESPONDER_BACKEND: nftables        # or fail2ban
-      # SSHWATCH_NFT_TABLE: "inet filter"
-      # SSHWATCH_NFT_SET: sshwatch_block
-      # SSHWATCH_IGNORE_IPS: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      # LOGFORT_RESPONDER_ENABLED: "true"
+      # LOGFORT_RESPONDER_BACKEND: nftables        # or fail2ban
+      # LOGFORT_NFT_TABLE: "inet filter"
+      # LOGFORT_NFT_SET: logfort_block
+      # LOGFORT_IGNORE_IPS: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
       # ── Notifications ────────────────────────────────────────────────────────
-      # SSHWATCH_NOTIFY_RULES: "accepted_login,ban,threshold:100/1h"
-      # SSHWATCH_NOTIFY_WEBHOOK_URL: https://hooks.example.com/sshwatch
-      # SSHWATCH_NOTIFY_TELEGRAM_TOKEN: 123456789:AAFxxxxxxxx
-      # SSHWATCH_NOTIFY_TELEGRAM_CHAT_ID: "-100123456789"
-      # SSHWATCH_NOTIFY_DISCORD_URL: https://discord.com/api/webhooks/xxx/yyy
+      # LOGFORT_NOTIFY_RULES: "accepted_login,ban,threshold:100/1h"
+      # LOGFORT_NOTIFY_WEBHOOK_URL: https://hooks.example.com/logfort
+      # LOGFORT_NOTIFY_TELEGRAM_TOKEN: 123456789:AAFxxxxxxxx
+      # LOGFORT_NOTIFY_TELEGRAM_CHAT_ID: "-100123456789"
+      # LOGFORT_NOTIFY_DISCORD_URL: https://discord.com/api/webhooks/xxx/yyy
 
-      SSHWATCH_LOG_LEVEL: info
+      LOGFORT_LOG_LEVEL: info
     restart: unless-stopped

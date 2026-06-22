@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/unwinds/sshwatch/internal/parse"
+	"github.com/unwinds/logfort/internal/parse"
 )
 
 func TestParseSSHDLines(t *testing.T) {

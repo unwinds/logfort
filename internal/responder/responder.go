@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/netip"
 
-	"github.com/unwinds/sshwatch/internal/config"
+	"github.com/unwinds/logfort/internal/config"
 )
 
 // Responder manages active banning of IP addresses.

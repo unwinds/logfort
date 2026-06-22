@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/unwinds/sshwatch/internal/parse"
-	"github.com/unwinds/sshwatch/internal/store"
+	"github.com/unwinds/logfort/internal/parse"
+	"github.com/unwinds/logfort/internal/store"
 )
 
 func newTestStore(t *testing.T) *store.SQLiteStore {

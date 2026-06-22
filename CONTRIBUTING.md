@@ -1,12 +1,12 @@
-# Contributing to SSHWatch
+# Contributing to LogFort
 
 Thank you for your interest in contributing!
 
 ## Development setup
 
 ```bash
-git clone https://github.com/unwinds/sshwatch
-cd sshwatch
+git clone https://github.com/unwinds/logfort
+cd logfort
 go mod download
 go test ./...
 ```
@@ -15,10 +15,10 @@ go test ./...
 
 ```bash
 # Point at a real auth.log (read-only)
-SSHWATCH_LOG_PATHS=/var/log/auth.log \
-SSHWATCH_DB_PATH=/tmp/sshwatch-dev.db \
-SSHWATCH_LISTEN=127.0.0.1:8080 \
-go run ./cmd/sshwatch
+LOGFORT_LOG_PATHS=/var/log/auth.log \
+LOGFORT_DB_PATH=/tmp/logfort-dev.db \
+LOGFORT_LISTEN=127.0.0.1:8080 \
+go run ./cmd/logfort
 ```
 
 ## Code standards

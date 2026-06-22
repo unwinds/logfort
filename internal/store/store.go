@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/unwinds/sshwatch/internal/parse"
+	"github.com/unwinds/logfort/internal/parse"
 )
 
 // ErrDuplicate is returned by InsertEvent when the event already exists in the

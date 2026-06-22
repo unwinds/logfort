@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/unwinds/sshwatch/internal/config"
-	"github.com/unwinds/sshwatch/internal/responder"
+	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/responder"
 )
 
 func TestAllowlist(t *testing.T) {

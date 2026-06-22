@@ -12,8 +12,8 @@ COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /sshwatch \
-    ./cmd/sshwatch
+    -o /logfort \
+    ./cmd/logfort
 
 # ---------------------------------------------------------------------------
 # Final image — minimal alpine for health-check support.
@@ -22,15 +22,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:3.19
 
 RUN apk --no-cache add ca-certificates wget && \
-    addgroup -S sshwatch && adduser -S -G sshwatch sshwatch
+    addgroup -S logfort && adduser -S -G logfort logfort
 
-COPY --from=builder /sshwatch /usr/local/bin/sshwatch
+COPY --from=builder /logfort /usr/local/bin/logfort
 
-USER sshwatch:sshwatch
+USER logfort:logfort
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD wget -q -O /dev/null http://localhost:8080/api/health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/sshwatch"]
+ENTRYPOINT ["/usr/local/bin/logfort"]

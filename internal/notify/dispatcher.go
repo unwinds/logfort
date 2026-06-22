@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/unwinds/sshwatch/internal/config"
-	"github.com/unwinds/sshwatch/internal/parse"
-	"github.com/unwinds/sshwatch/internal/store"
+	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/parse"
+	"github.com/unwinds/logfort/internal/store"
 )
 
 // Dispatcher evaluates notification rules and delivers matching alerts.
@@ -35,7 +35,7 @@ func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
 		return nil, nil
 	}
 	if len(cfg.NotifyRules) == 0 {
-		slog.Warn("notify: notifiers configured but SSHWATCH_NOTIFY_RULES is empty — no alerts will fire")
+		slog.Warn("notify: notifiers configured but LOGFORT_NOTIFY_RULES is empty — no alerts will fire")
 		return nil, nil
 	}
 	rules, err := parseRules(cfg.NotifyRules)
