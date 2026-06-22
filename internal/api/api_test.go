@@ -78,6 +78,7 @@ func newTestServer(t *testing.T, responderEnabled bool) (*api.Server, *mockStore
 		ResponderBackend: "mock",
 		IgnoreIPs:        []string{"127.0.0.0/8", "10.0.0.0/8"},
 		RetentionDays:    90,
+		AuthEnabled:      false,
 	}
 	ms := &mockStore{}
 	srv := api.New(cfg, ms, "test")
@@ -223,6 +224,67 @@ func TestUnbanNotRateLimited(t *testing.T) {
 	w := postJSON(t, srv, "/api/unban", map[string]string{"ip": "203.0.113.5"})
 	if w.Code == http.StatusTooManyRequests {
 		t.Error("unban must not be rate-limited, got 429")
+	}
+}
+
+func newAuthServer(t *testing.T) *api.Server {
+	t.Helper()
+	cfg := &config.Config{
+		Listen:      "127.0.0.1:0",
+		AuthEnabled: true,
+		AuthUser:    "admin",
+		AuthPass:    "secret",
+		IgnoreIPs:   []string{"127.0.0.0/8"},
+	}
+	ms := &mockStore{}
+	srv := api.New(cfg, ms, "test")
+	al, _ := responder.ParseAllowlist(cfg.IgnoreIPs)
+	srv.SetResponder(responder.NoopResponder{}, al)
+	return srv
+}
+
+func TestBasicAuth_NoCredentials(t *testing.T) {
+	srv := newAuthServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+	if w.Header().Get("WWW-Authenticate") == "" {
+		t.Error("missing WWW-Authenticate header")
+	}
+}
+
+func TestBasicAuth_WrongCredentials(t *testing.T) {
+	srv := newAuthServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.SetBasicAuth("admin", "wrong")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("want 401, got %d", w.Code)
+	}
+}
+
+func TestBasicAuth_Correct(t *testing.T) {
+	srv := newAuthServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.SetBasicAuth("admin", "secret")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBasicAuth_HealthExempt(t *testing.T) {
+	srv := newAuthServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/api/health must be exempt from auth, got %d", w.Code)
 	}
 }
 

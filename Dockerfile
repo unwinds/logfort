@@ -9,8 +9,9 @@ RUN go mod download
 
 # Copy source and build a fully static binary.
 COPY . .
+ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION}" \
     -o /sshwatch \
     ./cmd/sshwatch
 

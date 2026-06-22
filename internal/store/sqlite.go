@@ -144,7 +144,7 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO events(ts, ip, event_type, username, user_valid, auth_method, port, source, country, city, lat, lon, asn, raw)
+		INSERT OR IGNORE INTO events(ts, ip, event_type, username, user_valid, auth_method, port, source, country, city, lat, lon, asn, raw)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		e.TS.Unix(), e.IP, e.EventType, nullStr(e.Username), userValid,
 		nullStr(e.AuthMethod), nullInt(e.Port), e.Source,

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -101,7 +102,31 @@ func (s *Server) SetCounterFunc(fn func() (int64, int64)) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.AuthEnabled {
+		s.basicAuth(s.mux).ServeHTTP(w, r)
+		return
+	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// basicAuth wraps h with HTTP Basic authentication, exempting /api/health
+// so the Docker HEALTHCHECK works without credentials in the image.
+func (s *Server) basicAuth(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/health" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		user, pass, ok := r.BasicAuth()
+		userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.AuthUser)) == 1
+		passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.AuthPass)) == 1
+		if !ok || !userMatch || !passMatch {
+			w.Header().Set("WWW-Authenticate", `Basic realm="sshwatch"`)
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) routes() {

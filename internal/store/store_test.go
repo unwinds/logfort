@@ -66,8 +66,8 @@ func TestListEventsFilter(t *testing.T) {
 	s := newTestStore(t)
 
 	now := time.Now().UTC()
-	_ = s.InsertEvent(ctx, makeEvent("1.1.1.1", "failed_password", now))
-	_ = s.InsertEvent(ctx, makeEvent("2.2.2.2", "accepted", now))
+	_ = s.InsertEvent(ctx, makeEvent("1.1.1.1", "failed_password", now.Add(-2*time.Second)))
+	_ = s.InsertEvent(ctx, makeEvent("2.2.2.2", "accepted", now.Add(-1*time.Second)))
 	_ = s.InsertEvent(ctx, makeEvent("1.1.1.1", "failed_password", now))
 
 	rows, total, err := s.ListEvents(ctx, store.EventQuery{IP: "1.1.1.1", Limit: 10})

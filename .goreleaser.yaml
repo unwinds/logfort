@@ -1,0 +1,97 @@
+version: 2
+
+project_name: sshwatch
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sshwatch
+    main: ./cmd/sshwatch
+    binary: sshwatch
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: sshwatch
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    files:
+      - LICENSE
+      - README.md
+      - docker-compose.yml
+
+checksum:
+  name_template: "{{ .ProjectName }}_checksums.txt"
+
+dockers:
+  - id: sshwatch-amd64
+    ids:
+      - sshwatch
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-amd64"
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title=sshwatch"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/unwinds/sshwatch"
+    dockerfile: Dockerfile.release
+
+  - id: sshwatch-arm64
+    ids:
+      - sshwatch
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-arm64"
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title=sshwatch"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/unwinds/sshwatch"
+    dockerfile: Dockerfile.release
+
+docker_manifests:
+  - name_template: "ghcr.io/unwinds/sshwatch:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-amd64"
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-arm64"
+  - name_template: "ghcr.io/unwinds/sshwatch:latest"
+    image_templates:
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-amd64"
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-arm64"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^chore:"
+      - "^test:"
+  groups:
+    - title: "New features"
+      regexp: "^feat"
+      order: 0
+    - title: "Bug fixes"
+      regexp: "^fix"
+      order: 1
+    - title: "Other"
+      order: 999

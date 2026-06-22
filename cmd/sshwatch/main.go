@@ -20,7 +20,8 @@ import (
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
-const version = "0.9.0"
+// version is set at build time via -X main.version=<tag>.
+var version = "dev"
 
 func main() {
 	cfg, err := config.Load()

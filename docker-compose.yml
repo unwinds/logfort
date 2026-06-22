@@ -3,13 +3,51 @@ services:
     image: ghcr.io/unwinds/sshwatch:latest
     container_name: sshwatch
     ports:
-      - "127.0.0.1:8080:8080"   # localhost only — do NOT expose to the internet
+      - "127.0.0.1:8080:8080"   # localhost only — do NOT expose to the internet without auth or a reverse proxy
     volumes:
-      - /var/log/auth.log:/host/auth.log:ro
-      - ./data:/data
+      - /var/log/auth.log:/host/auth.log:ro          # Debian/Ubuntu sshd log
+      # - /var/log/secure:/host/auth.log:ro           # RHEL/Rocky/AlmaLinux sshd log
+      # - /var/log/nginx/error.log:/host/nginx_error.log:ro   # optional nginx error log
+      # - /var/log/nginx/access.log:/host/nginx_access.log:ro # optional nginx access log
+      - ./data:/data                                  # SQLite database + GeoIP mmdb
     environment:
-      - SSHWATCH_LOG_PATHS=/host/auth.log
-      - SSHWATCH_GEOIP_DB=/data/geo.mmdb    # optional; download separately (see README)
-      # - SSHWATCH_HOME_LAT=52.37
-      # - SSHWATCH_HOME_LON=4.90
+      # ── Log sources ──────────────────────────────────────────────────────────
+      SSHWATCH_LOG_PATHS: /host/auth.log
+      # Comma-separated; nginx logs are auto-detected by path keywords:
+      # SSHWATCH_LOG_PATHS: /host/auth.log,/host/nginx_error.log,/host/nginx_access.log
+      # SSHWATCH_FAIL2BAN_LOG: /host/fail2ban.log    # optional fail2ban log
+
+      # ── GeoIP (optional) ─────────────────────────────────────────────────────
+      # Download DB-IP Lite and place it at ./data/geo.mmdb before starting.
+      # curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" | gunzip > ./data/geo.mmdb
+      SSHWATCH_GEOIP_DB: /data/geo.mmdb
+
+      # ── Database ─────────────────────────────────────────────────────────────
+      SSHWATCH_DB_PATH: /data/sshwatch.db
+      SSHWATCH_RETENTION_DAYS: "90"
+
+      # ── HTTP auth (recommended when exposing beyond localhost) ────────────────
+      # SSHWATCH_AUTH_ENABLED: "true"
+      # SSHWATCH_AUTH_USER: admin
+      # SSHWATCH_AUTH_PASS: changeme
+
+      # ── Home marker on the attack map ────────────────────────────────────────
+      # SSHWATCH_HOME_LAT: "52.37"
+      # SSHWATCH_HOME_LON: "4.90"
+
+      # ── Active banning (disabled by default) ─────────────────────────────────
+      # SSHWATCH_RESPONDER_ENABLED: "true"
+      # SSHWATCH_RESPONDER_BACKEND: nftables        # or fail2ban
+      # SSHWATCH_NFT_TABLE: "inet filter"
+      # SSHWATCH_NFT_SET: sshwatch_block
+      # SSHWATCH_IGNORE_IPS: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+      # ── Notifications ────────────────────────────────────────────────────────
+      # SSHWATCH_NOTIFY_RULES: "accepted_login,ban,threshold:100/1h"
+      # SSHWATCH_NOTIFY_WEBHOOK_URL: https://hooks.example.com/sshwatch
+      # SSHWATCH_NOTIFY_TELEGRAM_TOKEN: 123456789:AAFxxxxxxxx
+      # SSHWATCH_NOTIFY_TELEGRAM_CHAT_ID: "-100123456789"
+      # SSHWATCH_NOTIFY_DISCORD_URL: https://discord.com/api/webhooks/xxx/yyy
+
+      SSHWATCH_LOG_LEVEL: info
     restart: unless-stopped
