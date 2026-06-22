@@ -295,4 +295,116 @@ func TestParseFixtureFile(t *testing.T) {
 	}
 }
 
+func TestParseNginxLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		wantType string
+		wantIP   string
+		wantUser string
+		wantErr  error
+	}{
+		// error.log auth failures
+		{
+			name:     "no user/password",
+			line:     `2026/06/22 14:32:01 [error] 12345#12345: *1 no user/password was provided for basic authentication, client: 203.0.113.5, server: example.com, request: "GET /admin HTTP/1.1", host: "example.com"`,
+			wantType: "http_auth_fail",
+			wantIP:   "203.0.113.5",
+		},
+		{
+			name:     "user not found",
+			line:     `2026/06/22 14:32:02 [error] 12345#12345: *2 user "admin" was not found in "/etc/nginx/.htpasswd", client: 203.0.113.6, server: example.com, request: "GET /secret HTTP/1.1", host: "example.com"`,
+			wantType: "http_auth_fail",
+			wantIP:   "203.0.113.6",
+			wantUser: "admin",
+		},
+		{
+			name:     "password mismatch",
+			line:     `2026/06/22 14:32:03 [error] 12345#12345: *3 user "root": password mismatch, client: 203.0.113.7, server: example.com, request: "POST /login HTTP/1.1", host: "example.com"`,
+			wantType: "http_auth_fail",
+			wantIP:   "203.0.113.7",
+			wantUser: "root",
+		},
+		// error.log non-auth lines → ErrNoMatch
+		{
+			name:    "nginx notice line",
+			line:    "2026/06/22 14:32:04 [notice] 12345#12345: signal process started",
+			wantErr: parse.ErrNoMatch,
+		},
+		{
+			name:    "nginx upstream timeout",
+			line:    `2026/06/22 14:32:05 [warn] 12345#12345: *4 upstream timed out (110: Connection timed out), client: 203.0.113.8, server: example.com, request: "GET / HTTP/1.1", host: "example.com"`,
+			wantErr: parse.ErrNoMatch,
+		},
+		// access.log 401 → auth failure
+		{
+			name:     "access.log 401 anonymous",
+			line:     `203.0.113.5 - - [22/Jun/2026:14:32:01 +0000] "GET /admin HTTP/1.1" 401 0 "-" "curl/7.68.0"`,
+			wantType: "http_auth_fail",
+			wantIP:   "203.0.113.5",
+			wantUser: "",
+		},
+		{
+			name:     "access.log 401 with user",
+			line:     `203.0.113.6 - admin [22/Jun/2026:14:32:02 +0000] "GET /wp-admin HTTP/1.1" 401 612 "-" "Mozilla/5.0"`,
+			wantType: "http_auth_fail",
+			wantIP:   "203.0.113.6",
+			wantUser: "admin",
+		},
+		// access.log non-401 → ErrNoMatch
+		{
+			name:    "access.log 200",
+			line:    `203.0.113.9 - - [22/Jun/2026:14:32:03 +0000] "GET /index.html HTTP/1.1" 200 1234 "-" "Mozilla/5.0"`,
+			wantErr: parse.ErrNoMatch,
+		},
+		{
+			name:    "access.log 404",
+			line:    `203.0.113.10 - - [22/Jun/2026:14:32:04 +0000] "GET /robots.txt HTTP/1.1" 404 153 "-" "Googlebot/2.1"`,
+			wantErr: parse.ErrNoMatch,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := parse.ParseLine(tc.line)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error: got %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ev.EventType != tc.wantType {
+				t.Errorf("EventType: got %q, want %q", ev.EventType, tc.wantType)
+			}
+			if ev.IP != tc.wantIP {
+				t.Errorf("IP: got %q, want %q", ev.IP, tc.wantIP)
+			}
+			if ev.Username != tc.wantUser {
+				t.Errorf("Username: got %q, want %q", ev.Username, tc.wantUser)
+			}
+			if ev.Source != "nginx" {
+				t.Errorf("Source: got %q, want \"nginx\"", ev.Source)
+			}
+			if ev.TS.IsZero() {
+				t.Error("TS is zero")
+			}
+		})
+	}
+}
+
+func TestNginxDoesNotBreakSSHD(t *testing.T) {
+	// Ensure sshd lines still parse correctly after nginx patterns were added.
+	line := "Jun 21 14:32:01 myhost sshd[12345]: Failed password for invalid user admin from 203.0.113.5 port 54321 ssh2"
+	ev, err := parse.ParseLine(line)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Source != "sshd" || ev.EventType != "failed_password" {
+		t.Errorf("got source=%q type=%q, want sshd/failed_password", ev.Source, ev.EventType)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

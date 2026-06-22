@@ -57,6 +57,29 @@ var fail2banPattern = regexp.MustCompile(`\[(?P<jail>[^\]]+)\]\s+(?P<action>Ban|
 // fail2banPrefix matches the timestamp portion of a fail2ban log line.
 var fail2banPrefix = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+fail2ban`)
 
+// Nginx error.log: "2026/06/22 14:32:01 [error] 12345#12345: *N message"
+var reNginxError = regexp.MustCompile(`^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[\w+\] \d+#\d+: \*\d+ (?P<msg>.+)$`)
+
+// nginxAuthPatterns are applied to the message portion of nginx error.log lines.
+var nginxAuthPatterns = []eventPattern{
+	{
+		typ: "http_auth_fail",
+		re:  regexp.MustCompile(`no user/password was provided for basic authentication, client: (?P<ip>[0-9a-fA-F:.]+)`),
+	},
+	{
+		typ: "http_auth_fail",
+		re:  regexp.MustCompile(`user "(?P<user>[^"]*)" was not found in "[^"]+", client: (?P<ip>[0-9a-fA-F:.]+)`),
+	},
+	{
+		typ: "http_auth_fail",
+		re:  regexp.MustCompile(`user "(?P<user>[^"]*)": password mismatch, client: (?P<ip>[0-9a-fA-F:.]+)`),
+	},
+}
+
+// Nginx access.log combined format: "IP - user [ts] "req" status bytes ..."
+// Only 401 responses are treated as auth failures.
+var reNginxAccess = regexp.MustCompile(`^(?P<ip>[0-9a-fA-F:.]+) - (?P<user>\S+) \[(?P<ts>[^\]]+)\] "[^"]*" (?P<status>\d{3}) `)
+
 func namedGroups(re *regexp.Regexp, s string) map[string]string {
 	m := re.FindStringSubmatch(s)
 	if m == nil {
@@ -97,7 +120,7 @@ func parseTimestamp(ts string) (time.Time, error) {
 	return parseTraditionalTS(ts)
 }
 
-// ParseLine parses a raw log line (sshd or fail2ban) into an Event.
+// ParseLine parses a raw log line (sshd, fail2ban, or nginx) into an Event.
 // Returns ErrNoMatch if the line is not a recognised auth event.
 func ParseLine(line string) (*Event, error) {
 	line = strings.TrimSpace(line)
@@ -105,9 +128,19 @@ func ParseLine(line string) (*Event, error) {
 		return nil, ErrNoMatch
 	}
 
-	// Check for fail2ban line first (distinct prefix)
+	// fail2ban: "2026-06-21 14:40:00,123 fail2ban..."
 	if fail2banPrefix.MatchString(line) {
 		return parseFail2BanLine(line)
+	}
+
+	// nginx error.log: "2026/06/22 14:32:01 [error] ..."
+	if reNginxError.MatchString(line) {
+		return parseNginxErrorLine(line)
+	}
+
+	// nginx access.log: "203.0.113.5 - user [ts] ..."
+	if reNginxAccess.MatchString(line) {
+		return parseNginxAccessLine(line)
 	}
 
 	return parseSSHDLine(line)
@@ -175,6 +208,58 @@ func parseSSHDLine(line string) (*Event, error) {
 	}
 
 	return nil, ErrNoMatch
+}
+
+func parseNginxErrorLine(line string) (*Event, error) {
+	m := namedGroups(reNginxError, line)
+	if m == nil {
+		return nil, ErrNoMatch
+	}
+	ts, err := time.ParseInLocation("2006/01/02 15:04:05", m["ts"], time.UTC)
+	if err != nil {
+		return nil, ErrNoMatch
+	}
+	for _, p := range nginxAuthPatterns {
+		pm := namedGroups(p.re, m["msg"])
+		if pm == nil {
+			continue
+		}
+		return &Event{
+			TS:        ts,
+			IP:        pm["ip"],
+			EventType: p.typ,
+			Username:  pm["user"],
+			Source:    "nginx",
+			Raw:       line,
+		}, nil
+	}
+	return nil, ErrNoMatch
+}
+
+func parseNginxAccessLine(line string) (*Event, error) {
+	m := namedGroups(reNginxAccess, line)
+	if m == nil {
+		return nil, ErrNoMatch
+	}
+	if m["status"] != "401" {
+		return nil, ErrNoMatch
+	}
+	ts, err := time.Parse("02/Jan/2006:15:04:05 -0700", m["ts"])
+	if err != nil {
+		return nil, ErrNoMatch
+	}
+	user := m["user"]
+	if user == "-" {
+		user = ""
+	}
+	return &Event{
+		TS:        ts.UTC(),
+		IP:        m["ip"],
+		EventType: "http_auth_fail",
+		Username:  user,
+		Source:    "nginx",
+		Raw:       line,
+	}, nil
 }
 
 func parseFail2BanLine(line string) (*Event, error) {

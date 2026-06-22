@@ -1,0 +1,5 @@
+2026/06/22 14:32:01 [error] 12345#12345: *1 no user/password was provided for basic authentication, client: 203.0.113.5, server: example.com, request: "GET /admin HTTP/1.1", host: "example.com"
+2026/06/22 14:32:02 [error] 12345#12345: *2 user "admin" was not found in "/etc/nginx/.htpasswd", client: 203.0.113.6, server: example.com, request: "GET /secret HTTP/1.1", host: "example.com"
+2026/06/22 14:32:03 [error] 12345#12345: *3 user "root": password mismatch, client: 203.0.113.7, server: example.com, request: "POST /login HTTP/1.1", host: "example.com"
+2026/06/22 14:32:04 [notice] 12345#12345: signal process started
+2026/06/22 14:32:05 [warn] 12345#12345: *4 upstream timed out (110: Connection timed out), client: 203.0.113.8, server: example.com, request: "GET / HTTP/1.1", host: "example.com"
