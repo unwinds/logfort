@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -197,6 +198,26 @@ func TestBanTracking(t *testing.T) {
 	bans, _ = s.ListBans(ctx, true)
 	if len(bans) != 0 {
 		t.Errorf("expected no active bans, got %d", len(bans))
+	}
+}
+
+func TestInsertEvent_Dedup(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	ev := makeEvent("1.2.3.4", "failed_password", now)
+
+	if err := s.InsertEvent(ctx, ev); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	if err := s.InsertEvent(ctx, ev); !errors.Is(err, store.ErrDuplicate) {
+		t.Fatalf("second insert: want ErrDuplicate, got %v", err)
+	}
+
+	_, total, _ := s.ListEvents(ctx, store.EventQuery{IP: "1.2.3.4", Limit: 10})
+	if total != 1 {
+		t.Errorf("want 1 row after dedup, got %d", total)
 	}
 }
 

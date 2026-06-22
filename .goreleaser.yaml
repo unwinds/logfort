@@ -69,15 +69,34 @@ dockers:
       - "--label=org.opencontainers.image.source=https://github.com/unwinds/sshwatch"
     dockerfile: Dockerfile.release
 
+  - id: sshwatch-armv7
+    ids:
+      - sshwatch
+    goos: linux
+    goarch: arm
+    goarm: "7"
+    image_templates:
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-armv7"
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm/v7"
+      - "--label=org.opencontainers.image.title=sshwatch"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/unwinds/sshwatch"
+    dockerfile: Dockerfile.release
+
 docker_manifests:
   - name_template: "ghcr.io/unwinds/sshwatch:{{ .Tag }}"
     image_templates:
       - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-amd64"
       - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-arm64"
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-armv7"
   - name_template: "ghcr.io/unwinds/sshwatch:latest"
     image_templates:
       - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-amd64"
       - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-arm64"
+      - "ghcr.io/unwinds/sshwatch:{{ .Tag }}-armv7"
 
 changelog:
   sort: asc

@@ -24,6 +24,7 @@ type Server struct {
 	cfg       *config.Config
 	store     store.Store
 	mux       *http.ServeMux
+	handler   http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
 	hub       *Hub
 	version   string
 	startTS   time.Time
@@ -47,6 +48,11 @@ func New(cfg *config.Config, st store.Store, version string) *Server {
 		banLim:    newRateLimiter(10, 20), // 10 req/s burst 20; unban is never throttled
 	}
 	s.routes()
+	if cfg.AuthEnabled {
+		s.handler = s.basicAuth(s.mux)
+	} else {
+		s.handler = s.mux
+	}
 	return s
 }
 
@@ -102,18 +108,14 @@ func (s *Server) SetCounterFunc(fn func() (int64, int64)) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.AuthEnabled {
-		s.basicAuth(s.mux).ServeHTTP(w, r)
-		return
-	}
-	s.mux.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }
 
 // basicAuth wraps h with HTTP Basic authentication, exempting /api/health
 // so the Docker HEALTHCHECK works without credentials in the image.
 func (s *Server) basicAuth(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/health" {
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/health/" {
 			h.ServeHTTP(w, r)
 			return
 		}

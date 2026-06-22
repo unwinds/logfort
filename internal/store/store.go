@@ -2,10 +2,16 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/unwinds/sshwatch/internal/parse"
 )
+
+// ErrDuplicate is returned by InsertEvent when the event already exists in the
+// database (matched by the dedup unique index). Callers should skip downstream
+// side-effects (SSE publish, notifications) for duplicate events.
+var ErrDuplicate = errors.New("duplicate event")
 
 // Store persists and queries authentication events.
 type Store interface {

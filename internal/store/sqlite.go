@@ -113,9 +113,11 @@ func (s *SQLiteStore) migrate() error {
 		if err != nil {
 			return fmt.Errorf("begin tx: %w", err)
 		}
-		if _, err := tx.Exec(string(data)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("exec migration %s: %w", entry.Name(), err)
+		for _, stmt := range splitSQL(string(data)) {
+			if _, err := tx.Exec(stmt); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("exec migration %s: %w", entry.Name(), err)
+			}
 		}
 		if _, err := tx.Exec("INSERT INTO schema_migrations(version, applied_at) VALUES(?,?)", version, time.Now().Unix()); err != nil {
 			tx.Rollback()
@@ -143,7 +145,7 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 		lat, lon = &e.Geo.Lat, &e.Geo.Lon
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO events(ts, ip, event_type, username, user_valid, auth_method, port, source, country, city, lat, lon, asn, raw)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		e.TS.Unix(), e.IP, e.EventType, nullStr(e.Username), userValid,
@@ -153,6 +155,13 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 	)
 	if err != nil {
 		return fmt.Errorf("insert event: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("insert event rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrDuplicate
 	}
 
 	// Mirror ban/unban events into the bans table.
@@ -532,6 +541,20 @@ func windowToSince(window string) (since int64, bucketSecs int64, err error) {
 	default:
 		return 0, 0, fmt.Errorf("invalid window %q; use 1h|6h|24h|7d|30d|all", window)
 	}
+}
+
+// splitSQL splits a migration file into individual statements on ";" so that
+// multi-statement files are executed one statement at a time. This is necessary
+// because database/sql does not guarantee that drivers execute all statements in
+// a multi-statement Exec call.
+func splitSQL(s string) []string {
+	var stmts []string
+	for _, stmt := range strings.Split(s, ";") {
+		if stmt = strings.TrimSpace(stmt); stmt != "" {
+			stmts = append(stmts, stmt)
+		}
+	}
+	return stmts
 }
 
 func nullStr(s string) any {

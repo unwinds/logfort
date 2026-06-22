@@ -91,6 +91,9 @@ func Load() (*Config, error) {
 	cfg.AuthEnabled = getEnv("SSHWATCH_AUTH_ENABLED", "false") == "true"
 	cfg.AuthUser = getEnv("SSHWATCH_AUTH_USER", "")
 	cfg.AuthPass = getEnv("SSHWATCH_AUTH_PASS", "")
+	if cfg.AuthEnabled && (cfg.AuthUser == "" || cfg.AuthPass == "") {
+		return nil, fmt.Errorf("SSHWATCH_AUTH_ENABLED=true requires both SSHWATCH_AUTH_USER and SSHWATCH_AUTH_PASS to be set")
+	}
 
 	// Responder
 	cfg.ResponderEnabled = getEnv("SSHWATCH_RESPONDER_ENABLED", "false") == "true"

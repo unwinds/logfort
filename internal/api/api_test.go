@@ -280,11 +280,13 @@ func TestBasicAuth_Correct(t *testing.T) {
 
 func TestBasicAuth_HealthExempt(t *testing.T) {
 	srv := newAuthServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("/api/health must be exempt from auth, got %d", w.Code)
+	for _, path := range []string{"/api/health", "/api/health/"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s must be exempt from auth, got %d", path, w.Code)
+		}
 	}
 }
 

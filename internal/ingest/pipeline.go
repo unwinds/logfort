@@ -95,8 +95,13 @@ func (p *Pipeline) Run(ctx context.Context) error {
 					ev.Geo.Lon = info.Lon
 					ev.Geo.ASN = info.ASN
 				}
-				if err := p.store.InsertEvent(ctx, ev); err != nil && !errors.Is(err, context.Canceled) {
-					slog.Error("store event", "err", err)
+				if err := p.store.InsertEvent(ctx, ev); err != nil {
+					if errors.Is(err, store.ErrDuplicate) {
+						continue
+					}
+					if !errors.Is(err, context.Canceled) {
+						slog.Error("store event", "err", err)
+					}
 				}
 				if p.publish != nil {
 					p.publish(ev)
