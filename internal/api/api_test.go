@@ -48,6 +48,9 @@ func (m *mockStore) UnbanIP(_ context.Context, ip string) error {
 	m.unbannedIPs = append(m.unbannedIPs, ip)
 	return nil
 }
+func (m *mockStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
 func (m *mockStore) Close() error { return nil }
 
 // mockResponder tracks ban/unban calls.

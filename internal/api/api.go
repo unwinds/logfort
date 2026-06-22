@@ -30,6 +30,7 @@ type Server struct {
 	responder responder.Responder
 	allowlist *responder.Allowlist
 	banLim    *rateLimiter // limits ban requests only; unban is not throttled
+	notifyFn  func(*parse.Event)
 }
 
 // New creates and configures the HTTP server.
@@ -52,6 +53,11 @@ func New(cfg *config.Config, st store.Store, version string) *Server {
 func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
 	s.responder = r
 	s.allowlist = al
+}
+
+// SetNotifyFunc wires a notification callback called after successful manual bans.
+func (s *Server) SetNotifyFunc(fn func(*parse.Event)) {
+	s.notifyFn = fn
 }
 
 // PublishEvent serialises a parsed event and broadcasts it to all SSE subscribers.
@@ -316,6 +322,14 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("manual ban", "ip", req.IP, "reason", req.Reason, "remote", remoteIP, "backend", s.responder.Name())
+	if s.notifyFn != nil {
+		s.notifyFn(&parse.Event{
+			TS:        time.Now().UTC(),
+			IP:        req.IP,
+			EventType: "ban",
+			Source:    "manual",
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "banned", "ip": req.IP})
 }
 

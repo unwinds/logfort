@@ -14,12 +14,13 @@ import (
 	"github.com/unwinds/sshwatch/internal/config"
 	"github.com/unwinds/sshwatch/internal/geo"
 	"github.com/unwinds/sshwatch/internal/ingest"
+	"github.com/unwinds/sshwatch/internal/notify"
 	"github.com/unwinds/sshwatch/internal/parse"
 	"github.com/unwinds/sshwatch/internal/responder"
 	"github.com/unwinds/sshwatch/internal/store"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 func main() {
 	cfg, err := config.Load()
@@ -81,13 +82,29 @@ func main() {
 		slog.Info("responder enabled", "backend", resp.Name())
 	}
 
+	// Build notify dispatcher (nil if no notifiers or rules configured).
+	dispatcher, err := notify.New(cfg, st)
+	if err != nil {
+		slog.Error("notify init failed", "err", err)
+		os.Exit(1)
+	}
+	if dispatcher != nil {
+		slog.Info("notify enabled", "rules", cfg.NotifyRules)
+	}
+
 	pipeline := ingest.NewPipeline(sources, parse.ParseLine, st)
 	pipeline.SetGeo(looker)
 
 	srv := api.New(cfg, st, version)
 	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
-	pipeline.SetPublishHook(srv.PublishEvent)
+	if dispatcher != nil {
+		srv.SetNotifyFunc(dispatcher.Notify)
+	}
+	pipeline.SetPublishHook(func(ev *parse.Event) {
+		srv.PublishEvent(ev)
+		dispatcher.Notify(ev) // nil-safe
+	})
 
 	httpSrv := &http.Server{
 		Addr:         cfg.Listen,
