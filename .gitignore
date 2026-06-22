@@ -20,3 +20,7 @@ node_modules/
 web/dist/*.js
 web/dist/*.css
 web/dist/assets/
+# Vendor assets bundled into the binary — keep in repo
+!web/dist/leaflet.min.js
+!web/dist/leaflet.min.css
+!web/dist/topojson-client.min.js

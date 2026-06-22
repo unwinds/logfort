@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SSHWatch</title>
+  <link rel="stylesheet" href="/leaflet.min.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -112,6 +113,40 @@
     .live-badge.offline { background: rgba(248,113,113,.15); color: var(--danger); }
     @keyframes fadeIn { from { opacity: 0; background: rgba(56,189,248,.06); } to { opacity: 1; background: transparent; } }
     tr.live-row td { animation: fadeIn .5s ease; }
+
+    /* Tab bar */
+    .tab-bar {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .tab-btn {
+      padding: 9px 20px; font-size: 13px; font-weight: 500; cursor: pointer;
+      border: none; background: none; color: var(--muted);
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color .15s, border-color .15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* Map */
+    #section-map { display: none; }
+    #map-el { height: calc(100vh - 272px); background: var(--bg); }
+    .leaflet-container { background: var(--bg) !important; }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+      background: var(--surface); color: var(--text); border: 1px solid var(--border);
+      box-shadow: 0 4px 12px rgba(0,0,0,.5);
+    }
+    .leaflet-popup-content { font-size: 12px; line-height: 1.6; }
+    .leaflet-popup-content b { color: var(--accent); font-family: monospace; }
+    .map-legend {
+      position: absolute; bottom: 24px; right: 12px; z-index: 1000;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 14px; font-size: 11px; color: var(--muted);
+    }
+    .map-legend .leg-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .map-legend .dot { border-radius: 50%; background: #f87171; opacity: .8; flex-shrink: 0; }
+    #map-empty { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      color:var(--muted); font-size:13px; text-align:center; z-index:500; pointer-events:none; }
   </style>
 </head>
 <body>
@@ -144,6 +179,12 @@
   <canvas id="timeline"></canvas>
 </div>
 
+<div class="tab-bar">
+  <button class="tab-btn active" id="tab-events" onclick="switchTab('events')">Events</button>
+  <button class="tab-btn" id="tab-map" onclick="switchTab('map')">Attack Map</button>
+</div>
+
+<div id="section-events">
 <div class="main">
   <div class="events-panel">
     <div class="panel-header">
@@ -160,7 +201,23 @@
     <ul class="top-list" id="top-countries"><li class="section-title">Top Countries</li></ul>
   </div>
 </div>
+</div><!-- /section-events -->
 
+<div id="section-map">
+  <div style="position:relative;">
+    <div id="map-el"></div>
+    <div id="map-empty">No geo data in this window.<br>Make sure a GeoIP database is configured.</div>
+    <div class="map-legend">
+      Attack volume
+      <div class="leg-row"><div class="dot" style="width:8px;height:8px;"></div> 1–9</div>
+      <div class="leg-row"><div class="dot" style="width:14px;height:14px;"></div> 10–99</div>
+      <div class="leg-row"><div class="dot" style="width:20px;height:20px;"></div> 100+</div>
+    </div>
+  </div>
+</div>
+
+<script src="/leaflet.min.js"></script>
+<script src="/topojson-client.min.js"></script>
 <script>
   const fmt = n => n?.toLocaleString() ?? '—';
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -331,6 +388,166 @@
     es.onmessage = e => {
       try { prependLiveEvent(JSON.parse(e.data)); } catch {}
     };
+  }
+
+  // ── Tab switching ───────────────────────────────────────────────────────
+  let currentTab = 'events';
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById('section-events').style.display = tab === 'events' ? 'block' : 'none';
+    document.getElementById('section-map').style.display    = tab === 'map'    ? 'block' : 'none';
+    document.getElementById('tab-events').classList.toggle('active', tab === 'events');
+    document.getElementById('tab-map').classList.toggle('active', tab === 'map');
+    if (tab === 'map') {
+      // Double rAF ensures browser has laid out the container before Leaflet measures it.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        leafletMap?.invalidateSize();
+        loadMap();
+      }));
+    }
+  }
+
+  // ── Leaflet attack map ──────────────────────────────────────────────────
+  let leafletMap = null;
+  let topoData   = null;
+  let markersLayer = null;
+
+  // Split a polygon ring at antimeridian jumps (|Δlng| > 180).
+  // Returns an array of closed rings.
+  //
+  // Russia (arc 161) has TWO jumps → 3 segments [A, B, C].
+  // A and C are both parts of the main Russian body; closing them
+  // independently creates long diagonal stripes. Fix: merge first+last
+  // segments into one ring, keep inner segments (Chukotka) separate.
+  function splitRing(ring) {
+    const open = ring.slice(0, ring.length - 1);
+    const segs = [[]];
+    for (const pt of open) {
+      const seg = segs[segs.length - 1];
+      if (seg.length > 0 && Math.abs(pt[0] - seg[seg.length - 1][0]) > 180) {
+        segs.push([]);
+      }
+      segs[segs.length - 1].push(pt);
+    }
+
+    if (segs.length === 1) return segs[0].length >= 3 ? [[...segs[0], segs[0][0]]] : [];
+    if (segs.length === 2) return segs.filter(s => s.length >= 3).map(s => [...s, s[0]]);
+
+    // 3+ segments: first and last are the same continuous piece that was
+    // interrupted by inner segments crossing the antimeridian. Merge them.
+    const merged = [...segs[segs.length - 1], ...segs[0]];
+    const inner  = segs.slice(1, -1);
+    return [merged, ...inner].filter(s => s.length >= 3).map(s => [...s, s[0]]);
+  }
+
+  // Split a LineString at antimeridian jumps.
+  function splitLine(coords) {
+    const segs = [[]];
+    for (const pt of coords) {
+      const seg = segs[segs.length - 1];
+      if (seg.length > 0 && Math.abs(pt[0] - seg[seg.length - 1][0]) > 180) {
+        segs.push([]);
+      }
+      segs[segs.length - 1].push(pt);
+    }
+    return segs.filter(s => s.length >= 2);
+  }
+
+  function fixAntimeridian(g) {
+    if (!g) return g;
+    if (g.type === 'Feature')           return { ...g, geometry: fixAntimeridian(g.geometry) };
+    if (g.type === 'FeatureCollection') return { ...g, features: g.features.map(fixAntimeridian) };
+    if (g.type === 'Polygon') {
+      const outers = splitRing(g.coordinates[0]);
+      const holes  = g.coordinates.slice(1).flatMap(splitRing);
+      if (outers.length <= 1)
+        return { type: 'Polygon', coordinates: [outers[0] ?? g.coordinates[0], ...holes] };
+      return { type: 'MultiPolygon',
+        coordinates: [[outers[0], ...holes], ...outers.slice(1).map(r => [r])] };
+    }
+    if (g.type === 'MultiPolygon') {
+      return { type: 'MultiPolygon', coordinates: g.coordinates.flatMap(poly => {
+        const outers = splitRing(poly[0]);
+        const holes  = poly.slice(1).flatMap(splitRing);
+        return outers.length === 0 ? [] :
+          [[outers[0], ...holes], ...outers.slice(1).map(r => [r])];
+      })};
+    }
+    if (g.type === 'MultiLineString')
+      return { type: 'MultiLineString', coordinates: g.coordinates.flatMap(splitLine) };
+    if (g.type === 'LineString')
+      return { type: 'MultiLineString', coordinates: splitLine(g.coordinates) };
+    return g;
+  }
+
+  async function initMap() {
+    delete L.Icon.Default.prototype._getIconUrl;
+
+    leafletMap = L.map('map-el', {
+      center: [20, 0],
+      zoom: 2,
+      minZoom: 1,
+      maxZoom: 8,
+      zoomSnap: 0.5,
+      attributionControl: false,
+    });
+
+    const resp = await fetch('/countries-110m.json');
+    topoData = await resp.json();
+
+    // Country fills — rings split at antimeridian to prevent cross-screen lines.
+    const countries = topojson.feature(topoData, topoData.objects.countries);
+    countries.features = countries.features.filter(f => f.id != 10);
+    L.geoJSON(fixAntimeridian(countries), {
+      style: { fillColor: '#1e2235', fillOpacity: 1, color: '#2d3350', weight: 0.3 },
+      interactive: false,
+    }).addTo(leafletMap);
+
+    // Interior country borders.
+    const borders = topojson.mesh(topoData, topoData.objects.countries, (a, b) => a !== b);
+    L.geoJSON(fixAntimeridian(borders), {
+      style: { fill: false, color: '#3a4060', weight: 0.4 },
+      interactive: false,
+    }).addTo(leafletMap);
+
+    markersLayer = L.layerGroup().addTo(leafletMap);
+  }
+
+  function attackRadius(count) {
+    if (count >= 100) return 12;
+    if (count >= 10)  return 8;
+    return 5;
+  }
+
+  async function loadMap() {
+    if (!leafletMap) await initMap();
+
+    const w = document.getElementById('window-select').value;
+    try {
+      const d = await fetch('/api/map?window=' + w).then(r => r.json());
+      const points = d.points || [];
+
+      markersLayer.clearLayers();
+
+      document.getElementById('map-empty').style.display = points.length === 0 ? 'block' : 'none';
+
+      points.forEach(p => {
+        L.circleMarker([p.lat, p.lon], {
+          radius:      attackRadius(p.count),
+          fillColor:   '#f87171',
+          fillOpacity: 0.75,
+          color:       '#ef4444',
+          weight:      1,
+        })
+        .bindPopup(
+          `<b>${esc(p.ip)}</b><br>` +
+          (p.country ? esc(p.country) + '<br>' : '') +
+          `<span style="color:var(--danger);font-weight:600">${fmt(p.count)}</span> attacks`
+        )
+        .addTo(markersLayer);
+      });
+    } catch (e) { console.error('map', e); }
   }
 
   loadHealth();
