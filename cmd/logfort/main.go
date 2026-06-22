@@ -54,8 +54,13 @@ func main() {
 		if cfg.Fail2BanLog != "" {
 			sources = append(sources, ingest.NewFileSource(cfg.Fail2BanLog))
 		}
+	} else if cfg.Backend == "journald" {
+		sources = append(sources, ingest.NewJournaldSource(cfg.JournaldUnit))
+		if cfg.Fail2BanLog != "" {
+			sources = append(sources, ingest.NewFileSource(cfg.Fail2BanLog))
+		}
 	} else {
-		slog.Error("unsupported backend (journald support coming in a future release)", "backend", cfg.Backend)
+		slog.Error("unsupported backend", "backend", cfg.Backend)
 		os.Exit(1)
 	}
 
