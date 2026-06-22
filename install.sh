@@ -136,7 +136,6 @@ VOLUMES="      - ${AUTH_LOG}:/host/auth.log:ro"
 LOG_PATHS="/host/auth.log"
 if [[ -n "$FAIL2BAN_LOG" ]]; then
   VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
-  LOG_PATHS="${LOG_PATHS},/host/fail2ban.log"
 fi
 VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
 

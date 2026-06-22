@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -56,6 +55,7 @@ func (j *journaldSource) Start(ctx context.Context, out chan<- string) error {
 	slog.Info("following journald", "unit", j.unit)
 
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	for scanner.Scan() {
 		raw := scanner.Text()
 		if raw == "" {
@@ -78,10 +78,19 @@ func (j *journaldSource) Start(ctx context.Context, out chan<- string) error {
 		}
 	}
 
-	if err := cmd.Wait(); err != nil && !errors.Is(ctx.Err(), context.Canceled) {
-		return fmt.Errorf("journalctl exited: %w", err)
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return fmt.Errorf("journalctl stdout: %w", err)
 	}
-	return ctx.Err()
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if waitErr != nil {
+		return fmt.Errorf("journalctl exited: %w", waitErr)
+	}
+	return fmt.Errorf("journalctl exited unexpectedly")
 }
 
 // journaldToSyslog converts a journald entry to an RFC3339 syslog line that
@@ -132,6 +141,9 @@ func decodeJournaldMessage(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &nums) == nil {
 		b := make([]byte, len(nums))
 		for i, v := range nums {
+			if v < 0 || v > 255 {
+				return ""
+			}
 			b[i] = byte(v)
 		}
 		return string(b)
