@@ -646,7 +646,7 @@ function switchSection(s) {
     }));
   }
   if (s === 'bans') loadBans();
-  if (s === 'events') loadEventsPage();
+  if (s === 'events') { eventsPage = 0; loadEventsPage(); }
   if (s === 'settings') loadSettings();
 }
 

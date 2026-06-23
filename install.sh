@@ -253,10 +253,12 @@ read_tty ans
 if [[ ! "$ans" =~ ^[Nn]$ ]]; then
   YEAR_MONTH=$(date +%Y-%m)
   GEOIP_URL="https://download.db-ip.com/free/dbip-city-lite-${YEAR_MONTH}.mmdb.gz"
+  GEOIP_TMP=$(mktemp "$INSTALL_DIR/data/geo.mmdb.XXXXXX")
   info "Downloading DB-IP Lite ${YEAR_MONTH}…"
-  if curl -fsSL "$GEOIP_URL" | gunzip > "$INSTALL_DIR/data/geo.mmdb"; then
+  if curl -fsSL "$GEOIP_URL" | gunzip > "$GEOIP_TMP" && mv "$GEOIP_TMP" "$INSTALL_DIR/data/geo.mmdb"; then
     info "GeoIP database saved to $INSTALL_DIR/data/geo.mmdb"
   else
+    rm -f "$GEOIP_TMP"
     warn "GeoIP download failed — you can download it later:"
     warn "  curl -fsSL \"$GEOIP_URL\" | gunzip > $INSTALL_DIR/data/geo.mmdb"
   fi

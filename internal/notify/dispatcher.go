@@ -18,6 +18,7 @@ type Dispatcher struct {
 	st        store.Store
 	ctx       context.Context
 	cancel    context.CancelFunc
+	startedAt time.Time
 }
 
 // New builds a Dispatcher from config. Returns nil if no notifiers or no rules
@@ -45,7 +46,7 @@ func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
 		return nil, fmt.Errorf("notify rules: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Dispatcher{notifiers: notifiers, rules: rules, st: st, ctx: ctx, cancel: cancel}, nil
+	return &Dispatcher{notifiers: notifiers, rules: rules, st: st, ctx: ctx, cancel: cancel, startedAt: time.Now()}, nil
 }
 
 // Stop cancels all in-flight Notify goroutines. Safe to call on a nil Dispatcher.
@@ -71,6 +72,11 @@ func (d *Dispatcher) Notify(ev *parse.Event) {
 
 // dispatch is the synchronous core used by Notify and by tests.
 func (d *Dispatcher) dispatch(ctx context.Context, ev *parse.Event) {
+	// Suppress notifications for events that pre-date startup — prevents flooding
+	// when fail2ban.log is replayed from the beginning to reconstruct ban state.
+	if ev.TS.Before(d.startedAt.Add(-time.Minute)) {
+		return
+	}
 	for _, r := range d.rules {
 		msg := r.match(ctx, ev, d.st)
 		if msg == nil {

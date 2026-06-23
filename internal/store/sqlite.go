@@ -176,7 +176,7 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 		)
 	} else if e.EventType == "unban" {
 		_, err = s.db.ExecContext(ctx, `
-			UPDATE bans SET active=0, unbanned_at=? WHERE ip=? AND active=1`,
+			UPDATE bans SET active=0, unbanned_at=? WHERE ip=? AND active=1 AND source='fail2ban'`,
 			e.TS.Unix(), e.IP,
 		)
 	}
