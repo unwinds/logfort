@@ -4,12 +4,6 @@
 #   or: bash install.sh [--dir /opt/logfort] [--image ghcr.io/unwinds/logfort:latest]
 set -euo pipefail
 
-# When piped through curl | bash, stdin is the pipe; redirect to /dev/tty so
-# interactive prompts work correctly.
-if [[ ! -t 0 ]]; then
-  exec < /dev/tty
-fi
-
 # ── defaults ──────────────────────────────────────────────────────────────────
 LOGFORT_IMAGE="${LOGFORT_IMAGE:-ghcr.io/unwinds/logfort:latest}"
 INSTALL_DIR="${LOGFORT_DIR:-/opt/logfort}"
@@ -20,6 +14,9 @@ info()  { echo -e "${GREEN}[logfort]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[logfort]${NC} $*"; }
 error() { echo -e "${RED}[logfort]${NC} $*" >&2; exit 1; }
 ask()   { echo -e "${BOLD}$*${NC}"; }
+
+# read_tty — reads one line from /dev/tty so prompts work via curl | bash.
+read_tty() { read -r "$1" </dev/tty; }
 
 # ── arg parsing ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -70,7 +67,7 @@ install_pkg() {
 if ! command -v docker &>/dev/null; then
   warn "Docker is not installed."
   ask "Install Docker automatically? [y/N]"
-  read -r ans
+  read_tty ans
   if [[ "$ans" =~ ^[Yy]$ ]]; then
     info "installing Docker via get.docker.com…"
     curl -fsSL https://get.docker.com | sh
@@ -84,7 +81,7 @@ fi
 FAIL2BAN_LOG=""
 if ! command -v fail2ban-client &>/dev/null; then
   ask "fail2ban is not installed. Install it now? [y/N]"
-  read -r ans
+  read_tty ans
   if [[ "$ans" =~ ^[Yy]$ ]] && [[ -n "$PKG_MGR" ]]; then
     install_pkg fail2ban
     systemctl enable --now fail2ban || true
@@ -117,7 +114,7 @@ else
 fi
 
 ask "Log backend: (1) file  (2) journald  [${DEFAULT_BACKEND}]:"
-read -r backend_choice
+read_tty backend_choice
 [[ -z "$backend_choice" ]] && backend_choice="$DEFAULT_BACKEND"
 
 if [[ "$backend_choice" == "2" ]]; then
@@ -126,7 +123,7 @@ if [[ "$backend_choice" == "2" ]]; then
   fi
   BACKEND="journald"
   ask "systemd unit to follow [ssh.service]:"
-  read -r unit_input
+  read_tty unit_input
   [[ -n "$unit_input" ]] && JOURNALD_UNIT="$unit_input"
   info "journald backend: unit=$JOURNALD_UNIT"
 fi
@@ -144,7 +141,7 @@ if [[ "$BACKEND" == "file" ]]; then
   if [[ -z "$AUTH_LOG" ]]; then
     warn "could not auto-detect auth log path."
     ask "Enter path to your auth/sshd log file:"
-    read -r AUTH_LOG
+    read_tty AUTH_LOG
     [[ -r "$AUTH_LOG" ]] || error "file not found or not readable: $AUTH_LOG"
   fi
   info "auth log: $AUTH_LOG"
@@ -154,16 +151,16 @@ fi
 HOME_LAT=""
 HOME_LON=""
 ask "Enter your server's latitude for the attack map (optional, press Enter to skip):"
-read -r HOME_LAT
+read_tty HOME_LAT
 if [[ -n "$HOME_LAT" ]]; then
   ask "Enter longitude:"
-  read -r HOME_LON
+  read_tty HOME_LON
 fi
 
 # ── listen port ───────────────────────────────────────────────────────────────
 LISTEN_PORT=8080
 ask "Dashboard port [8080]:"
-read -r input_port
+read_tty input_port
 [[ -n "$input_port" ]] && LISTEN_PORT="$input_port"
 
 # ── prepare install dir ───────────────────────────────────────────────────────
@@ -256,7 +253,7 @@ info ""
 
 # ── start ─────────────────────────────────────────────────────────────────────
 ask "Start logfort now? [Y/n]"
-read -r ans
+read_tty ans
 if [[ ! "$ans" =~ ^[Nn]$ ]]; then
   docker compose -f "$COMPOSE_FILE" pull
   docker compose -f "$COMPOSE_FILE" up -d
