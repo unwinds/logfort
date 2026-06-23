@@ -619,7 +619,7 @@ function switchSection(s) {
   currentSection = s;
   SECTIONS.forEach(id => {
     const el = document.getElementById('section-' + id);
-    if (el) el.style.display = id === s ? (id === 'settings' ? 'flex' : 'block') : 'none';
+    if (el) el.style.display = id === s ? (id === 'settings' || id === 'map' ? 'flex' : 'block') : 'none';
     const nb = document.getElementById('nav-' + id);
     if (nb) nb.classList.toggle('active', id === s);
     const mb = document.getElementById('mnav-' + id);
