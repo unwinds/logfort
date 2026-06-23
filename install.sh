@@ -165,6 +165,7 @@ read_tty input_port
 
 # ── prepare install dir ───────────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR/data"
+chmod 777 "$INSTALL_DIR/data"
 info "install directory: $INSTALL_DIR"
 
 # ── generate docker-compose.yml ───────────────────────────────────────────────
