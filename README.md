@@ -1,57 +1,77 @@
+[English](README.md) · [Русский](README_RU.md)
+
 # LogFort
 
-> Self-hosted dashboard for monitoring SSH and web authentication attacks in real time.
-
 [![CI](https://github.com/unwinds/logfort/actions/workflows/ci.yml/badge.svg)](https://github.com/unwinds/logfort/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/unwinds/logfort?color=58a6ff)](https://github.com/unwinds/logfort/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+
+**Real-time SSH & nginx attack dashboard — self-hosted, one-command install, zero cloud.**
+
+LogFort watches your auth logs and shows you a live browser dashboard: who is attacking, where from, what usernames they try, and a world map of attack origins — all without sending a single byte outside your server.
 
 ---
 
 ## Features
 
-- **Live event feed** — failed and accepted logins stream in real time via SSE
-- **Statistics** — top attacker IPs, usernames, countries, hourly/daily timeline
-- **Attack map** — geo-located markers on an offline Leaflet map (no external tile servers)
-- **Ban list** — view active and expired bans; one-click ban/unban from the UI
-- **Active banning** — optional nftables or fail2ban integration
-- **Notifications** — Telegram, Discord, or generic webhook; configurable rules (per-event or threshold-based)
-- **Settings UI** — change notification config at runtime without restarting
-- **nginx support** — parses nginx `error.log` (auth failures) and `access.log` (401 responses)
-- **fail2ban log** — optional second source for ban/unban events
-- **journald backend** — follow systemd journal instead of a log file
-- **HTTP Basic Auth** — optional, protects all routes except `/api/health`
-- **Privacy-first** — zero outbound requests; GeoIP is local `.mmdb`, map tiles are embedded GeoJSON
+- 🔴 **Live event feed** — failed and accepted logins stream instantly via SSE, no polling
+- 🗺️ **Offline attack map** — Leaflet + embedded GeoJSON, no external tile servers required
+- 📊 **Stats & timeline** — top attacker IPs, usernames, countries; hourly/daily bar chart
+- 🚫 **One-click banning** — active block via nftables or fail2ban, with full ban/unban history
+- 🔔 **Notifications** — Telegram, Discord, or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`
+- 📋 **Events with pagination** — browse full attack history, 50/100/200 rows per page
+- 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, `fail2ban.log`, systemd journal
+- 🔒 **HTTP Basic Auth** — optional, protects all routes except `/api/health`
+- 🛡️ **Privacy-first** — zero outbound requests at runtime; GeoIP is a local `.mmdb` file
+- ⚙️ **Runtime settings UI** — configure notifications in the browser, no restart needed
 
 ---
 
-## Quick start
-
-### Automated install (recommended)
-
-The install script detects your distro, optionally installs fail2ban, asks whether to use `file` or `journald` backend, and writes a ready-to-run `docker-compose.yml`.
+## Quick Start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unwinds/logfort/main/install.sh | sudo bash
 ```
 
-Or with options:
+The script:
+- Detects your distro (Debian/Ubuntu/RHEL/Rocky/Alma)
+- Optionally installs Docker and fail2ban
+- Lets you choose **file** backend (auth.log) or **journald** backend (systemd journal)
+- Auto-detects your auth log path
+- Generates a ready-to-run `docker-compose.yml`
+- Optionally pulls the image and starts the container
+
+> **Flags:** `--dir /opt/logfort` and `--image ghcr.io/unwinds/logfort:latest`
+
+After install, reach the dashboard via SSH tunnel:
 
 ```bash
-sudo bash install.sh --dir /opt/logfort --image ghcr.io/unwinds/logfort:latest
+ssh -L 8080:localhost:8080 user@yourserver
+# Open http://localhost:8080
 ```
 
-Then:
+---
+
+## GeoIP (optional, recommended)
+
+Download a free [DB-IP Lite](https://db-ip.com/db/lite/city) database for the attack map — no account required:
 
 ```bash
-cd /opt/logfort
-docker compose up -d
-# Open http://localhost:8080 (via SSH tunnel — see below)
+curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" \
+  | gunzip > /opt/logfort/data/geo.mmdb
+docker compose -f /opt/logfort/docker-compose.yml restart
 ```
 
-### Manual Docker Compose
+Also supports MaxMind GeoLite2 City (same mmdb format).
+
+---
+
+## Manual Docker Compose
+
+If you prefer not to use the install script:
 
 ```yaml
-# docker-compose.yml
 services:
   logfort:
     image: ghcr.io/unwinds/logfort:latest
@@ -62,130 +82,94 @@ services:
       - /var/log/auth.log:/host/auth.log:ro
       - ./data:/data
     environment:
+      - LOGFORT_LISTEN=0.0.0.0:8080
       - LOGFORT_LOG_PATHS=/host/auth.log
+      - LOGFORT_DB_PATH=/data/logfort.db
     restart: unless-stopped
-```
-
-```bash
-docker compose up -d
-```
-
-### Access via SSH tunnel
-
-LogFort binds to `127.0.0.1` by default. To reach it from your local machine:
-
-```bash
-ssh -L 8080:localhost:8080 user@yourserver
-# Open http://localhost:8080
 ```
 
 ---
 
 ## Configuration
 
-All settings are environment variables. Notification settings can also be changed at runtime via the Settings page in the UI.
+All settings are environment variables. Notification settings can also be changed at runtime via the Settings tab in the UI without restarting.
 
 ### Core
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOGFORT_LISTEN` | `127.0.0.1:8080` | HTTP bind address |
+| `LOGFORT_LISTEN` | `127.0.0.1:8080` | HTTP bind address (use `0.0.0.0:8080` inside Docker) |
 | `LOGFORT_BACKEND` | `file` | Log backend: `file` or `journald` |
-| `LOGFORT_LOG_PATHS` | `/host/auth.log` | Comma-separated log paths (sshd, nginx error.log, nginx access.log auto-detected) |
-| `LOGFORT_JOURNALD_UNIT` | `ssh.service` | systemd unit to follow when `LOGFORT_BACKEND=journald` |
-| `LOGFORT_FAIL2BAN_LOG` | *(empty)* | Optional fail2ban log path, parsed as an extra source |
+| `LOGFORT_LOG_PATHS` | `/host/auth.log` | Comma-separated log paths (sshd, nginx auto-detected by content) |
+| `LOGFORT_JOURNALD_UNIT` | `ssh.service` | systemd unit to follow (journald backend only) |
+| `LOGFORT_FAIL2BAN_LOG` | _(empty)_ | Optional fail2ban log — replayed from the beginning on each start |
 | `LOGFORT_DB_PATH` | `/data/logfort.db` | SQLite database path |
 | `LOGFORT_GEOIP_DB` | `/data/geo.mmdb` | GeoIP mmdb path; silently skipped if missing |
 | `LOGFORT_RETENTION_DAYS` | `90` | Purge events older than N days |
 | `LOGFORT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `LOGFORT_HOME_LAT` / `_LON` | *(empty)* | Optional home-marker coordinates on the attack map |
+| `LOGFORT_HOME_LAT` / `_LON` | _(empty)_ | Optional home-marker coordinates on the attack map |
 
 ### Authentication
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOGFORT_AUTH_ENABLED` | `false` | Enable HTTP Basic Auth on all routes except `/api/health` |
-| `LOGFORT_AUTH_USER` | *(empty)* | Basic auth username (required when auth is enabled) |
-| `LOGFORT_AUTH_PASS` | *(empty)* | Basic auth password (required when auth is enabled) |
+| `LOGFORT_AUTH_ENABLED` | `false` | Enable HTTP Basic Auth (all routes except `/api/health`) |
+| `LOGFORT_AUTH_USER` / `_PASS` | _(empty)_ | Credentials — both required when auth is enabled |
 
-### Active banning
+### Active Banning
 
 | Variable | Default | Description |
 |---|---|---|
 | `LOGFORT_RESPONDER_ENABLED` | `false` | Enable firewall integration |
 | `LOGFORT_RESPONDER_BACKEND` | `nftables` | `nftables` or `fail2ban` |
 | `LOGFORT_NFT_TABLE` | `inet filter` | nftables table (`family name`) |
-| `LOGFORT_NFT_SET` | `logfort_block` | nftables set name |
+| `LOGFORT_NFT_SET` | `logfort_block` | nftables set name (must exist) |
 | `LOGFORT_FAIL2BAN_JAIL` | `sshd` | fail2ban jail name |
-| `LOGFORT_IGNORE_IPS` | RFC-1918 + loopback | Comma-separated CIDRs/IPs never banned |
+| `LOGFORT_IGNORE_IPS` | RFC-1918 + loopback | CIDRs/IPs that are never banned |
 
 ### Notifications
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOGFORT_NOTIFY_WEBHOOK_URL` | *(empty)* | Generic webhook (POST JSON) |
-| `LOGFORT_NOTIFY_TELEGRAM_TOKEN` | *(empty)* | Telegram bot token |
-| `LOGFORT_NOTIFY_TELEGRAM_CHAT_ID` | *(empty)* | Telegram chat ID |
-| `LOGFORT_NOTIFY_DISCORD_URL` | *(empty)* | Discord webhook URL |
-| `LOGFORT_NOTIFY_RULES` | *(empty)* | Comma-separated trigger rules (see below) |
+| `LOGFORT_NOTIFY_WEBHOOK_URL` | _(empty)_ | Generic webhook (POST JSON) |
+| `LOGFORT_NOTIFY_TELEGRAM_TOKEN` / `_CHAT_ID` | _(empty)_ | Telegram bot |
+| `LOGFORT_NOTIFY_DISCORD_URL` | _(empty)_ | Discord webhook |
+| `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `threshold:N/dur` |
 
-Env vars always take priority over values saved via the UI.
-
-**Notification rules:**
-
-| Rule | Fires when |
-|---|---|
-| `accepted_login` | A successful SSH login is detected |
-| `ban` | An IP is banned |
-| `new_country` | An attack arrives from a country not seen since startup |
-| `threshold:N/dur` | An IP exceeds N events in the given window (e.g. `threshold:100/1h`) |
+Env vars always override values saved via the UI.
 
 ---
 
-## Supported log sources
+## Supported Log Sources
 
 | Source | Auto-detected by |
 |---|---|
-| sshd (`auth.log`, `secure`) | `sshd[` prefix |
+| sshd (`auth.log`, `secure`, OpenSSH 9+ `sshd-session`) | syslog/RFC3339 prefix + `proc=sshd` |
 | nginx `error.log` | `YYYY/MM/DD HH:MM:SS [` prefix |
 | nginx `access.log` | `IP - user [ts]` format, 401 responses only |
 | fail2ban | `YYYY-MM-DD HH:MM:SS,ms fail2ban` prefix |
 | systemd journal | `LOGFORT_BACKEND=journald` |
 
-**Typical log paths by distro:**
+**Typical auth log paths:**
 
 | Distro | Path |
 |---|---|
 | Debian / Ubuntu | `/var/log/auth.log` |
 | RHEL / Fedora / CentOS | `/var/log/secure` |
-| Arch / Alpine | journald (`LOGFORT_BACKEND=journald`) |
+| Arch / Alpine / Debian 13 | journald (`LOGFORT_BACKEND=journald`) |
 
 ---
 
-## GeoIP (optional)
+## journald Backend
 
-LogFort supports [DB-IP Lite](https://db-ip.com/db/lite.php.html) (free, CC-BY 4.0) and MaxMind GeoLite2 — both use the same mmdb binary format.
-
-```bash
-# Download DB-IP Lite (no account required)
-curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" \
-  | gunzip > data/geo.mmdb
-```
-
-Place the file at `LOGFORT_GEOIP_DB` (default `/data/geo.mmdb`) and restart the container. If no file is found, the app works without geo data.
-
----
-
-## journald backend
-
-For systems that log to systemd journal instead of files:
+For systems that log to systemd journal instead of a file (Arch, Alpine, Debian 13+):
 
 ```yaml
 services:
   logfort:
     image: ghcr.io/unwinds/logfort:latest
     group_add:
-      - "systemd-journal-gid"   # replace with output of: getent group systemd-journal | cut -d: -f3
+      - "NNN"   # systemd-journal GID: getent group systemd-journal | cut -d: -f3
     volumes:
       - /run/log/journal:/run/log/journal:ro
       - /var/log/journal:/var/log/journal:ro
@@ -193,6 +177,7 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
       - ./data:/data
     environment:
+      - LOGFORT_LISTEN=0.0.0.0:8080
       - LOGFORT_BACKEND=journald
       - LOGFORT_JOURNALD_UNIT=ssh.service
 ```
@@ -201,44 +186,46 @@ The install script generates this automatically when you choose the journald bac
 
 ---
 
-## Security notice
+## Security Notes
 
-- LogFort **listens on `127.0.0.1` by default** — do not expose it directly to the internet.
-- The dashboard shows sensitive data (attacker IPs, login activity).
+- LogFort **binds to `127.0.0.1` by default** — do not expose it directly to the internet.
+- The dashboard shows sensitive data (attacker IPs, login usernames, timing).
 - Use an SSH tunnel, Tailscale, or WireGuard for remote access.
-- Enable HTTP Basic Auth (`LOGFORT_AUTH_ENABLED=true`) as an additional layer.
-- The active banning feature modifies your firewall. Enable it only intentionally — review `LOGFORT_IGNORE_IPS` before use.
+- Enable HTTP Basic Auth as an additional layer.
+- The active banning feature modifies your firewall — review `LOGFORT_IGNORE_IPS` to avoid accidentally blocking legitimate IPs.
 
 ---
 
-## Comparison
+## Development
 
-| | LogFort | Grafana + Loki + Prometheus |
-|---|---|---|
-| Containers | **1** | 4–6 |
-| Setup | **`install.sh`** | Manual config |
-| GeoIP | **Local mmdb** | External or self-hosted |
-| Map tiles | **Embedded GeoJSON** | External tile server |
-| Outbound requests | **None** | Prometheus, Grafana Cloud, etc. |
-| Notifications | **Built-in** | Alertmanager |
+Requires Go 1.25+. No CGO — uses `modernc.org/sqlite` (pure Go SQLite).
 
----
+```bash
+# Build
+go build -ldflags="-X main.version=dev" -o ./logfort ./cmd/logfort
 
-## Privacy
+# Tests (always with -race)
+go test -race ./...
 
-LogFort makes **zero outbound network requests** with your data:
+# Run locally against test fixture
+LOGFORT_LOG_PATHS=$(pwd)/testdata/auth_debian.log \
+LOGFORT_DB_PATH=/tmp/logfort-dev.db \
+LOGFORT_LISTEN=127.0.0.1:8080 \
+go run ./cmd/logfort
 
-- GeoIP is resolved against a local `.mmdb` file
-- The attack map uses embedded offline GeoJSON (no Leaflet CDN at runtime)
-- No analytics, no telemetry, no CDN dependencies
-
-The only outbound connections are **opt-in notifications** (Telegram / Discord / webhook), explicitly configured by you.
+# Lint
+golangci-lint run
+```
 
 ---
 
-## Contributing
+## Releasing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+Pushing a `v*` tag triggers GitHub Actions: tests → goreleaser → multi-arch Docker images (`linux/amd64`, `arm64`, `armv7`) pushed to `ghcr.io/unwinds/logfort`.
 
 ---
 

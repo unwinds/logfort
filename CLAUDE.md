@@ -81,20 +81,22 @@ api.Server  (stdlib ServeMux, Go ≥1.22 method+path patterns)
 ```
 
 **Key interfaces** — all wired via constructors in `main.go`, no globals:
-- `ingest.Source` — `Start(ctx, chan<- string)` — `fileSource` (nxadm/tail) and `journaldSource` (journalctl subprocess)
+- `ingest.Source` — `Start(ctx, chan<- string)` — `fileSource` (nxadm/tail) and `journaldSource` (journalctl subprocess). The pipeline wraps each source in a retry loop (exponential backoff 1s→30s) so a transient journald restart does not permanently stop ingestion. Use `NewFileSource(path)` for auth/nginx logs (starts from end of file); use `NewFileSourceFromStart(path)` for fail2ban.log so ban state is reconstructed from full history on every restart.
 - `store.Store` — `InsertEvent / ListEvents / GetStats / GetMapPoints / ListBans / BanIP / UnbanIP / DeleteOldEvents / CountIPEvents / GetSetting / SetSetting / GetAllSettings`
 - `geo.Looker` — `Lookup(ip) Info` — `geo.DB` (mmdb) or `geo.NoopLooker{}` (no file)
 - `responder.Responder` — `Ban / Unban / List / Name` — `NftablesResponder`, `Fail2BanResponder`, or `NoopResponder`
 - `notify.Notifier` — `Send(ctx, Message) error` — `webhookNotifier`, `telegramNotifier`, `discordNotifier`
-- `Pipeline.SetGeo` / `Pipeline.SetPublishHook` — optional hooks set in main; hook calls `srv.NotifyEvent(ev)` (not `dispatcher.Notify` directly) so the dispatcher can be swapped at runtime
+- `Pipeline.SetGeo` / `Pipeline.SetPublishHook` — optional hooks set in main; hook calls `srv.PublishEvent(ev)` (SSE hub) and `srv.NotifyEvent(ev)` (not `dispatcher.Notify` directly) so the dispatcher can be swapped at runtime
 - `api.Server.SetCounterFunc(pipeline.Counters)` — wires parsed/unparsed counters into `/api/health`
-- `api.Server.SetNotifyFunc(fn)` / `NotifyEvent(ev)` — mutex-protected; POST /api/settings rebuilds the Dispatcher and calls SetNotifyFunc without restart
+- `api.Server.SetDispatcher(d)` — preferred way to wire a `*notify.Dispatcher`; calls `Stop()` on the previous dispatcher before replacing it. Use `SetNotifyFunc(fn)` only in tests (does not call Stop).
+- `api.Server.SetEnvNotifyConfig(config.Config)` — must be called in `main.go` with the pre-`OverlaySettings` config so that POST /api/settings never overwrites fields set by env vars at runtime. `Server.cfgMu` (RWMutex) protects runtime-mutable notify fields of `cfg`; always hold it when reading or writing those fields in handlers.
+- `api.Server.NotifyEvent(ev)` — mutex-protected dispatch through the current notifyFn; safe to call from any goroutine.
 
 **parse package** — stateless, regexes compiled at init. `ParseLine` dispatches in this order:
 1. fail2ban prefix (`YYYY-MM-DD HH:MM:SS,ms fail2ban`) → `parseFail2BanLine`
 2. nginx error.log prefix (`YYYY/MM/DD HH:MM:SS [`) → `parseNginxErrorLine` (auth failures only)
 3. nginx access.log prefix (`IP - user [ts]`) → `parseNginxAccessLine` (401 responses only)
-4. syslog/RFC3339 prefix with `proc=sshd` → `parseSSHDLine` against `sshdPatterns`
+4. syslog/RFC3339 prefix with `proc=sshd` or `proc=sshd-session` → `parseSSHDLine` against `sshdPatterns` (`sshd-session` is used by OpenSSH 9+ / Debian 13)
 
 `ErrNoMatch` = line is silently ignored (counted in `unparsed` counter). Nginx events get `source="nginx"`, `event_type="http_auth_fail"`.
 
@@ -102,11 +104,11 @@ api.Server  (stdlib ServeMux, Go ≥1.22 method+path patterns)
 
 **geo package** — wraps `oschwald/maxminddb-golang`. Supports GeoLite2-City and DB-IP Lite formats (same mmdb binary format). Any lookup error returns empty `Info{}` — never propagates to caller.
 
-**web embed** — `web/webui.go` (package `webui`) holds `//go:embed dist`. API package imports it and serves via `fs.Sub(webui.FS, "dist")`. Frontend is vanilla HTML/JS (no build step). Vendor assets (`leaflet.min.js/css`, `topojson-client.min.js`, `countries-110m.json`) are committed to `web/dist/` and explicitly un-ignored in `.gitignore`. Layout: left sidebar (220 px) with five sections — Dashboard, Events, Map, Bans, Settings. Mobile breakpoint is `@media (max-width: 700px)`: sidebar hides, a bottom tab bar appears, and table columns are hidden via CSS `nth-child`. The Settings section talks to `GET/POST /api/settings` and `POST /api/notify/test`; it renders Telegram/Discord/Webhook cards and a rules picker with `threshold:N/dur` decomposition.
+**web embed** — `web/webui.go` (package `webui`) holds `//go:embed dist`. API package imports it and serves via `fs.Sub(webui.FS, "dist")`. Frontend is vanilla HTML/JS (no build step). Vendor assets (`leaflet.min.js/css`, `topojson-client.min.js`, `countries-110m.json`) are committed to `web/dist/` and explicitly un-ignored in `.gitignore`. Layout: left sidebar (220 px) with five sections — Dashboard, Events, Map, Bans, Settings. Mobile breakpoint is `@media (max-width: 700px)`: sidebar hides, a bottom tab bar appears, and table columns are hidden via CSS `nth-child`. The Settings section talks to `GET/POST /api/settings` and `POST /api/notify/test`; it renders Telegram/Discord/Webhook cards and a rules picker with `threshold:N/dur` decomposition. Events section has client-side pagination (`eventsPage`, `eventsPageSize` JS state; prev/next buttons; 50/100/200 per-page selector). Timeline chart (`drawTimeline`) fills sparse API buckets with zero-count entries to cover the full window range — the API returns only non-empty buckets. Map section must be shown with `display:flex` (not `display:block`) so `#map-el { flex:1 }` gets a non-zero height.
 
 **responder package** — active firewall control. `New(cfg)` returns a `(Responder, *Allowlist, error)` triple; callers pass these into `api.Server.SetResponder`. The nftables backend lives in `nftables.go` (`//go:build linux`) with a stub in `nftables_stub.go` (`//go:build !linux`) — both export the same `newNftablesResponder` signature. `normalizeIP()` in api.go converts IPv4-mapped IPv6 (`::ffff:1.2.3.4`) to plain IPv4 for reliable comparisons (including anti-self-lockout). Ban flow: `store.BanIP` first, then `responder.Ban`; on firewall failure, `store.UnbanIP` is called to rollback before returning HTTP 500. Unban is never rate-limited — only POST /api/ban uses `banLim` (10 rps burst 20).
 
-**notify package** — `notify.New(cfg, st)` returns a `*Dispatcher` (nil if no notifiers or rules configured — nil-safe to call). Rules parsed from `LOGFORT_NOTIFY_RULES` or the `settings` DB table: `accepted_login`, `ban`, `new_country`, `threshold:N/dur` (e.g. `threshold:100/1h`). `Dispatcher.Notify(ev)` fires a background goroutine per event, evaluates all rules, calls all configured notifiers. The `new_country` rule tracks seen countries in an in-memory `sync.Map` (resets on restart). The threshold rule uses `store.CountIPEvents` and has per-IP cooldown equal to the window to avoid alert spam. POST /api/settings calls `notify.New` with the updated cfg and swaps the live Dispatcher via `srv.SetNotifyFunc` — no restart needed.
+**notify package** — `notify.New(cfg, st)` returns a `*Dispatcher` (nil if no notifiers or rules configured — nil-safe to call). Returns `(nil, err)` only on bad rule syntax. Rules parsed from `LOGFORT_NOTIFY_RULES` or the `settings` DB table: `accepted_login`, `ban`, `new_country`, `threshold:N/dur` (e.g. `threshold:100/1h`). `Dispatcher.Notify(ev)` fires a background goroutine per event using an internal context (cancelled by `Dispatcher.Stop()`), evaluates all rules, calls all configured notifiers. The `new_country` rule tracks seen countries in an in-memory `sync.Map` (resets on restart). The threshold rule uses `store.CountIPEvents` and has per-IP cooldown equal to the window to avoid alert spam. POST /api/settings validates the proposed config with `notify.New` before touching the DB (bad rules → HTTP 400, no DB write); on success it swaps the live Dispatcher via `srv.SetDispatcher`, which calls `Stop()` on the old one — no restart needed. Env-var-set notify fields are never overridden by the UI: `Server.envCfg` (set via `SetEnvNotifyConfig`) gates which fields `handlePostSettings` may mutate at runtime.
 
 ## Configuration (env vars)
 
@@ -160,7 +162,7 @@ Same steps, but add the regex to `nginxAuthPatterns` (error.log auth messages) o
 
 ## Deploying
 
-`install.sh` — host-side setup script (not run inside the container). Detects distro, optionally installs fail2ban, asks whether to use the `file` or `journald` backend, auto-detects the auth log path (file backend) or prompts for the systemd unit (journald backend), and generates a ready-to-run `docker-compose.yml` in the install directory (default `/opt/logfort`). For the journald backend the compose mounts `/run/log/journal`, `/var/log/journal`, `/run/systemd/journal` and `/etc/machine-id` from the host, and adds the host's `systemd-journal` GID via `group_add` so the container user can read journal files. The container image includes `journalctl` (via `apk add systemd`).
+`install.sh` — host-side setup script (not run inside the container). Detects distro, optionally installs fail2ban, asks whether to use the `file` or `journald` backend, auto-detects the auth log path (file backend) or prompts for the systemd unit (journald backend), and generates a ready-to-run `docker-compose.yml` in the install directory (default `/opt/logfort`). For the journald backend the compose mounts `/run/log/journal`, `/var/log/journal`, `/run/systemd/journal` and `/etc/machine-id` from the host, and adds the host's `systemd-journal` GID via `group_add` so the container user can read journal files. Always sets `LOGFORT_LISTEN=0.0.0.0:8080` in the generated compose (required inside Docker — binding to `127.0.0.1` inside the container blocks Docker's bridge proxy). The `data/` directory is `chmod 777` so the non-root `logfort` container user can write the SQLite database. All `read` prompts use a `read_tty` helper (`read -r VAR </dev/tty`) so the script works when piped via `curl | bash`. The container image is `debian:bookworm-slim` with `apt install systemd` (provides `journalctl`); Alpine was dropped because `systemd` is not packaged for Alpine stable.
 
 ```bash
 sudo bash install.sh [--dir /opt/logfort] [--image ghcr.io/unwinds/logfort:latest]
@@ -188,7 +190,7 @@ For local Docker builds use `Dockerfile` (full multi-stage build with Go toolcha
 - Structured logging via `log/slog` (JSON handler, no `fmt.Print*` in runtime paths).
 - Errors wrapped with `%w`; no `panic` outside init/startup.
 - `responder` touches the host firewall — always check `IGNORE_IPS` and anti-self-lockout before any ban.
-- `notify.Dispatcher` is nil-safe — check `New` returns nil when no notifiers/rules configured; callers must not crash on nil.
+- `notify.Dispatcher` is nil-safe — `New` returns nil (not error) when no notifiers/rules configured; callers must not crash on nil. `Dispatcher.Stop()` is also nil-safe. Always swap via `srv.SetDispatcher` (not `SetNotifyFunc`) when replacing a live Dispatcher so `Stop()` is called on the old one.
 - Basic auth exempts `/api/health` — Docker `HEALTHCHECK` must remain credential-free.
 - `store.ErrDuplicate` is returned by `InsertEvent` when the row already exists; callers (pipeline, tests) must check for it with `errors.Is` and skip publish/notify side-effects rather than treating it as a fatal error.
-- When adding new methods to `store.Store` interface, also add stub implementations to `mockStore` in `internal/api/api_test.go` and `stubStore` in `internal/notify/dispatcher_test.go`.
+- When adding new methods to `store.Store` interface, also add stub implementations to `mockStore` in `internal/api/api_test.go`, `stubStore` in `internal/notify/dispatcher_test.go`, and `stubStore` in `internal/ingest/pipeline_test.go`.

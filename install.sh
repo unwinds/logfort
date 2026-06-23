@@ -247,12 +247,20 @@ fi
 
 info "docker-compose.yml written to $COMPOSE_FILE"
 
-# ── GeoIP hint ────────────────────────────────────────────────────────────────
-YEAR_MONTH=$(date +%Y-%m)
-info ""
-info "Optional: download a free GeoIP database for the attack map:"
-info "  curl -L \"https://download.db-ip.com/free/dbip-city-lite-${YEAR_MONTH}.mmdb.gz\" | gunzip > ${INSTALL_DIR}/data/geo.mmdb"
-info ""
+# ── GeoIP download ────────────────────────────────────────────────────────────
+ask "Download free GeoIP database for the attack map? (DB-IP Lite, CC BY 4.0) [Y/n]"
+read_tty ans
+if [[ ! "$ans" =~ ^[Nn]$ ]]; then
+  YEAR_MONTH=$(date +%Y-%m)
+  GEOIP_URL="https://download.db-ip.com/free/dbip-city-lite-${YEAR_MONTH}.mmdb.gz"
+  info "Downloading DB-IP Lite ${YEAR_MONTH}…"
+  if curl -fsSL "$GEOIP_URL" | gunzip > "$INSTALL_DIR/data/geo.mmdb"; then
+    info "GeoIP database saved to $INSTALL_DIR/data/geo.mmdb"
+  else
+    warn "GeoIP download failed — you can download it later:"
+    warn "  curl -fsSL \"$GEOIP_URL\" | gunzip > $INSTALL_DIR/data/geo.mmdb"
+  fi
+fi
 
 # ── start ─────────────────────────────────────────────────────────────────────
 ask "Start logfort now? [Y/n]"
