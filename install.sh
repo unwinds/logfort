@@ -76,18 +76,20 @@ fi
 
 # ── fail2ban (optional) ───────────────────────────────────────────────────────
 FAIL2BAN_LOG=""
+FAIL2BAN_JUST_INSTALLED=false
 if ! command -v fail2ban-client &>/dev/null; then
   ask "fail2ban is not installed. Install it now? [y/N]"
   read -r ans
   if [[ "$ans" =~ ^[Yy]$ ]] && [[ -n "$PKG_MGR" ]]; then
     install_pkg fail2ban
     systemctl enable --now fail2ban || true
+    FAIL2BAN_JUST_INSTALLED=true
   fi
 fi
 if command -v fail2ban-client &>/dev/null; then
-  if [[ -f /var/log/fail2ban.log ]]; then
+  if $FAIL2BAN_JUST_INSTALLED || [[ -f /var/log/fail2ban.log ]]; then
     FAIL2BAN_LOG="/var/log/fail2ban.log"
-    info "fail2ban log detected: $FAIL2BAN_LOG"
+    info "fail2ban log: $FAIL2BAN_LOG"
   fi
 fi
 
@@ -113,6 +115,9 @@ read -r backend_choice
 [[ -z "$backend_choice" ]] && backend_choice="$DEFAULT_BACKEND"
 
 if [[ "$backend_choice" == "2" ]]; then
+  if ! command -v journalctl &>/dev/null; then
+    error "journalctl not found — journald backend requires systemd on the host. Switch to file backend or install systemd."
+  fi
   BACKEND="journald"
   ask "systemd unit to follow [ssh.service]:"
   read -r unit_input
