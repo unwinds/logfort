@@ -432,6 +432,16 @@
       <div class="section-toolbar">
         <h2>Events</h2>
         <span id="events-total-label" style="color:var(--muted);font-size:11px;"></span>
+        <div class="toolbar-right">
+          <span id="events-page-label" style="color:var(--muted);font-size:11px;"></span>
+          <select id="events-page-size" onchange="eventsPageSize=+this.value;eventsPage=0;loadEventsPage()" style="font-size:11px;padding:2px 4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+            <option value="50">50 / page</option>
+            <option value="100" selected>100 / page</option>
+            <option value="200">200 / page</option>
+          </select>
+          <button class="btn btn-muted" id="events-prev-btn" onclick="eventsPage--;loadEventsPage()" disabled>&#8592;</button>
+          <button class="btn btn-muted" id="events-next-btn" onclick="eventsPage++;loadEventsPage()" disabled>&#8594;</button>
+        </div>
       </div>
       <div class="full-table-wrap" id="events-full-container"><div class="empty-state">Loading…</div></div>
     </div>
@@ -750,17 +760,26 @@ async function loadDashboardEvents() {
 }
 
 // ── Events full page ─────────────────────────────────────────────────────────
+let eventsPage = 0, eventsPageSize = 100;
+
 async function loadEventsPage() {
   const w = document.getElementById('window-select').value;
   const wSecs = { '1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000 };
   const since = wSecs[w] ? '&since=' + (Math.floor(Date.now()/1000) - wSecs[w]) : '';
   const el = document.getElementById('events-full-container');
+  const offset = eventsPage * eventsPageSize;
   try {
-    const d = await fetch('/api/events?limit=500' + since).then(r => r.json());
+    const d = await fetch(`/api/events?limit=${eventsPageSize}&offset=${offset}${since}`).then(r => r.json());
     const events = d.events || [];
-    document.getElementById('events-total-label').textContent = d.total ? `${fmt(d.total)} total` : '';
+    const total = d.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / eventsPageSize));
+    document.getElementById('events-total-label').textContent = total ? `${fmt(total)} total` : '';
+    document.getElementById('events-page-label').textContent = total ? `Page ${eventsPage+1} of ${totalPages}` : '';
+    document.getElementById('events-prev-btn').disabled = eventsPage === 0;
+    document.getElementById('events-next-btn').disabled = eventsPage >= totalPages - 1;
     if (!events.length) { el.innerHTML = '<div class="empty-state">No events in this window.</div>'; return; }
     el.innerHTML = eventsTable(events, 'events-table');
+    el.scrollTop = 0;
   } catch(e) { el.innerHTML = `<div class="error-msg">${esc(String(e))}</div>`; }
 }
 
@@ -1080,7 +1099,7 @@ function loadAll() {
   loadStats();
   loadDashboardEvents();
   loadBansBadge();
-  if (currentSection === 'events') loadEventsPage();
+  if (currentSection === 'events') { eventsPage = 0; loadEventsPage(); }
   if (currentSection === 'map')    loadMap();
   if (currentSection === 'bans')   loadBans();
 }
