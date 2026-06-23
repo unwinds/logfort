@@ -91,22 +91,53 @@ if command -v fail2ban-client &>/dev/null; then
   fi
 fi
 
-# ── detect auth log path ──────────────────────────────────────────────────────
-AUTH_LOG=""
+# ── backend selection ─────────────────────────────────────────────────────────
+BACKEND="file"
+JOURNALD_UNIT="ssh.service"
+
+# Auto-suggest journald when no auth log file is present.
+HAS_AUTH_LOG=false
 for candidate in /var/log/auth.log /var/log/secure; do
-  if [[ -r "$candidate" ]]; then
-    AUTH_LOG="$candidate"
-    break
-  fi
+  if [[ -r "$candidate" ]]; then HAS_AUTH_LOG=true; break; fi
 done
 
-if [[ -z "$AUTH_LOG" ]]; then
-  warn "could not auto-detect auth log path."
-  ask "Enter path to your auth/sshd log file:"
-  read -r AUTH_LOG
-  [[ -r "$AUTH_LOG" ]] || error "file not found or not readable: $AUTH_LOG"
+if $HAS_AUTH_LOG; then
+  DEFAULT_BACKEND="1"
+else
+  DEFAULT_BACKEND="2"
+  info "no auth log file found — journald backend recommended."
 fi
-info "auth log: $AUTH_LOG"
+
+ask "Log backend: (1) file  (2) journald  [${DEFAULT_BACKEND}]:"
+read -r backend_choice
+[[ -z "$backend_choice" ]] && backend_choice="$DEFAULT_BACKEND"
+
+if [[ "$backend_choice" == "2" ]]; then
+  BACKEND="journald"
+  ask "systemd unit to follow [ssh.service]:"
+  read -r unit_input
+  [[ -n "$unit_input" ]] && JOURNALD_UNIT="$unit_input"
+  info "journald backend: unit=$JOURNALD_UNIT"
+fi
+
+# ── detect auth log path (file backend only) ──────────────────────────────────
+AUTH_LOG=""
+if [[ "$BACKEND" == "file" ]]; then
+  for candidate in /var/log/auth.log /var/log/secure; do
+    if [[ -r "$candidate" ]]; then
+      AUTH_LOG="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$AUTH_LOG" ]]; then
+    warn "could not auto-detect auth log path."
+    ask "Enter path to your auth/sshd log file:"
+    read -r AUTH_LOG
+    [[ -r "$AUTH_LOG" ]] || error "file not found or not readable: $AUTH_LOG"
+  fi
+  info "auth log: $AUTH_LOG"
+fi
 
 # ── optional home coordinates ─────────────────────────────────────────────────
 HOME_LAT=""
@@ -131,40 +162,71 @@ info "install directory: $INSTALL_DIR"
 # ── generate docker-compose.yml ───────────────────────────────────────────────
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 
-# Build volumes block
-VOLUMES="      - ${AUTH_LOG}:/host/auth.log:ro"
-LOG_PATHS="/host/auth.log"
-if [[ -n "$FAIL2BAN_LOG" ]]; then
-  VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
-fi
-VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
+# Build volumes and env blocks depending on backend.
+if [[ "$BACKEND" == "journald" ]]; then
+  # Mount host journal files and the systemd journal socket so that journalctl
+  # inside the container can read and follow the host journal.
+  # /run/log/journal — volatile (tmpfs) journal; /var/log/journal — persistent.
+  # /run/systemd/journal — socket dir needed for --follow to get live events.
+  # /etc/machine-id — required for journalctl to identify which journal to open.
+  VOLUMES="      - /run/log/journal:/run/log/journal:ro"
+  VOLUMES="${VOLUMES}"$'\n'"      - /var/log/journal:/var/log/journal:ro"
+  VOLUMES="${VOLUMES}"$'\n'"      - /run/systemd/journal:/run/systemd/journal:ro"
+  VOLUMES="${VOLUMES}"$'\n'"      - /etc/machine-id:/etc/machine-id:ro"
+  VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
 
-# Build env block
-ENV_BLOCK="      - LOGFORT_LOG_PATHS=${LOG_PATHS}"
-ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
-ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
-if [[ -n "$FAIL2BAN_LOG" ]]; then
-  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_FAIL2BAN_LOG=/host/fail2ban.log"
+  # Detect the systemd-journal GID on this host so the container user can read
+  # journal files (which are group-readable by systemd-journal).
+  JOURNAL_GID=$(getent group systemd-journal 2>/dev/null | cut -d: -f3 || echo "")
+
+  ENV_BLOCK="      - LOGFORT_BACKEND=journald"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_JOURNALD_UNIT=${JOURNALD_UNIT}"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
+else
+  VOLUMES="      - ${AUTH_LOG}:/host/auth.log:ro"
+  LOG_PATHS="/host/auth.log"
+  if [[ -n "$FAIL2BAN_LOG" ]]; then
+    VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
+  fi
+  VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
+
+  ENV_BLOCK="      - LOGFORT_LOG_PATHS=${LOG_PATHS}"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
+  if [[ -n "$FAIL2BAN_LOG" ]]; then
+    ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_FAIL2BAN_LOG=/host/fail2ban.log"
+  fi
 fi
+
 if [[ -n "$HOME_LAT" ]] && [[ -n "$HOME_LON" ]]; then
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_HOME_LAT=${HOME_LAT}"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_HOME_LON=${HOME_LON}"
 fi
 
-cat > "$COMPOSE_FILE" <<EOF
-# Generated by logfort install.sh — $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-services:
-  logfort:
-    image: ${LOGFORT_IMAGE}
-    container_name: logfort
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${LISTEN_PORT}:8080"
-    volumes:
-${VOLUMES}
-    environment:
-${ENV_BLOCK}
-EOF
+# Build optional group_add block for journald GID.
+GROUP_ADD_BLOCK=""
+if [[ "$BACKEND" == "journald" ]] && [[ -n "${JOURNAL_GID:-}" ]]; then
+  GROUP_ADD_BLOCK=$'    group_add:\n'"      - \"${JOURNAL_GID}\""
+fi
+
+{
+  echo "# Generated by logfort install.sh — $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  echo "services:"
+  echo "  logfort:"
+  echo "    image: ${LOGFORT_IMAGE}"
+  echo "    container_name: logfort"
+  echo "    restart: unless-stopped"
+  echo "    ports:"
+  echo "      - \"127.0.0.1:${LISTEN_PORT}:8080\""
+  echo "    volumes:"
+  echo "${VOLUMES}"
+  if [[ -n "$GROUP_ADD_BLOCK" ]]; then
+    echo "$GROUP_ADD_BLOCK"
+  fi
+  echo "    environment:"
+  echo "${ENV_BLOCK}"
+} > "$COMPOSE_FILE"
 
 info "docker-compose.yml written to $COMPOSE_FILE"
 

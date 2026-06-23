@@ -29,9 +29,9 @@ LOGFORT_DB_PATH=/tmp/logfort-dev.db \
 LOGFORT_LISTEN=127.0.0.1:8080 \
 go run ./cmd/logfort
 
-# Run with GeoIP (Attack Map needs real public IPs — testdata uses RFC 5737 docs IPs)
+# Run with GeoIP — use testdata/auth_public.log (real public IPs) for attack map testing
 # Download DB-IP Lite: curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" | gunzip > /tmp/dbip-city.mmdb
-LOGFORT_LOG_PATHS=/tmp/fake.log \
+LOGFORT_LOG_PATHS=$(pwd)/testdata/auth_public.log \
 LOGFORT_DB_PATH=/tmp/logfort-dev.db \
 LOGFORT_GEOIP_DB=/tmp/dbip-city.mmdb \
 LOGFORT_LISTEN=127.0.0.1:8080 \
@@ -160,7 +160,7 @@ Same steps, but add the regex to `nginxAuthPatterns` (error.log auth messages) o
 
 ## Deploying
 
-`install.sh` — host-side setup script (not run inside the container). Detects distro, optionally installs fail2ban, auto-detects the auth log path, and generates a ready-to-run `docker-compose.yml` in the install directory (default `/opt/logfort`).
+`install.sh` — host-side setup script (not run inside the container). Detects distro, optionally installs fail2ban, asks whether to use the `file` or `journald` backend, auto-detects the auth log path (file backend) or prompts for the systemd unit (journald backend), and generates a ready-to-run `docker-compose.yml` in the install directory (default `/opt/logfort`). For the journald backend the compose mounts `/run/log/journal`, `/var/log/journal`, `/run/systemd/journal` and `/etc/machine-id` from the host, and adds the host's `systemd-journal` GID via `group_add` so the container user can read journal files. The container image includes `journalctl` (via `apk add systemd`).
 
 ```bash
 sudo bash install.sh [--dir /opt/logfort] [--image ghcr.io/unwinds/logfort:latest]

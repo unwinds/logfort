@@ -21,8 +21,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ---------------------------------------------------------------------------
 FROM alpine:3.19
 
-RUN apk --no-cache add ca-certificates wget && \
-    addgroup -S logfort && adduser -S -G logfort logfort
+RUN apk --no-cache add ca-certificates wget systemd && \
+    addgroup -S logfort && adduser -S -G logfort logfort && \
+    addgroup logfort systemd-journal 2>/dev/null || true
 
 COPY --from=builder /logfort /usr/local/bin/logfort
 
