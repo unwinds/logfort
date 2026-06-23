@@ -4,6 +4,12 @@
 #   or: bash install.sh [--dir /opt/logfort] [--image ghcr.io/unwinds/logfort:latest]
 set -euo pipefail
 
+# When piped through curl | bash, stdin is the pipe; redirect to /dev/tty so
+# interactive prompts work correctly.
+if [[ ! -t 0 ]]; then
+  exec < /dev/tty
+fi
+
 # ── defaults ──────────────────────────────────────────────────────────────────
 LOGFORT_IMAGE="${LOGFORT_IMAGE:-ghcr.io/unwinds/logfort:latest}"
 INSTALL_DIR="${LOGFORT_DIR:-/opt/logfort}"
