@@ -191,7 +191,8 @@ if [[ "$BACKEND" == "journald" ]]; then
   # journal files (which are group-readable by systemd-journal).
   JOURNAL_GID=$(getent group systemd-journal 2>/dev/null | cut -d: -f3 || echo "")
 
-  ENV_BLOCK="      - LOGFORT_BACKEND=journald"
+  ENV_BLOCK="      - LOGFORT_LISTEN=0.0.0.0:8080"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_BACKEND=journald"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_JOURNALD_UNIT=${JOURNALD_UNIT}"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
@@ -206,7 +207,8 @@ else
   fi
   VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
 
-  ENV_BLOCK="      - LOGFORT_LOG_PATHS=${LOG_PATHS}"
+  ENV_BLOCK="      - LOGFORT_LISTEN=0.0.0.0:8080"
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_LOG_PATHS=${LOG_PATHS}"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
   if [[ -n "$FAIL2BAN_LOG" ]]; then
