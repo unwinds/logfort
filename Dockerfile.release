@@ -1,9 +1,13 @@
 # syntax=docker/dockerfile:1
 # Used by goreleaser — receives a pre-built binary in the build context.
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk --no-cache add ca-certificates wget && \
-    addgroup -S logfort && adduser -S -G logfort logfort
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget systemd \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system logfort \
+    && adduser --system --ingroup logfort --no-create-home logfort \
+    && adduser logfort systemd-journal 2>/dev/null || true
 
 COPY logfort /usr/local/bin/logfort
 

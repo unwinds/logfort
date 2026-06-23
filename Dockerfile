@@ -19,11 +19,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # Final image — minimal alpine for health-check support.
 # Switch to distroless/static when a native health-check binary is added.
 # ---------------------------------------------------------------------------
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk --no-cache add ca-certificates wget systemd && \
-    addgroup -S logfort && adduser -S -G logfort logfort && \
-    addgroup logfort systemd-journal 2>/dev/null || true
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget systemd \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system logfort \
+    && adduser --system --ingroup logfort --no-create-home logfort \
+    && adduser logfort systemd-journal 2>/dev/null || true
 
 COPY --from=builder /logfort /usr/local/bin/logfort
 
