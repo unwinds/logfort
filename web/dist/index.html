@@ -651,7 +651,7 @@ function switchSection(s) {
 }
 
 // ── Timeline ────────────────────────────────────────────────────────────────
-function drawTimeline(buckets) {
+function drawTimeline(buckets, win) {
   const canvas = document.getElementById('timeline');
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth, H = 56;
@@ -662,11 +662,22 @@ function drawTimeline(buckets) {
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
     ctx.font = '11px system-ui'; ctx.fillText('No data', 8, H/2 + 4); return;
   }
-  const max = Math.max(...buckets.map(b => b.count), 1);
+  // Fill sparse API buckets with zeros so the full window range is shown.
+  const bucketSecs = {'1h':3600,'6h':3600,'24h':3600,'7d':86400,'30d':86400,'all':86400}[win] || 3600;
+  const windowSecs = {'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000}[win];
+  const now = Math.floor(Date.now() / 1000);
+  const countMap = Object.fromEntries(buckets.map(b => [b.bucket_ts, b.count]));
+  const start = windowSecs
+    ? Math.floor((now - windowSecs) / bucketSecs) * bucketSecs
+    : Math.min(...buckets.map(b => b.bucket_ts));
+  const end = Math.floor(now / bucketSecs) * bucketSecs;
+  const full = [];
+  for (let t = start; t <= end; t += bucketSecs) full.push({count: countMap[t] || 0});
+  const max = Math.max(...full.map(b => b.count), 1);
   const gap = 2;
-  const barW = Math.max(2, Math.floor((W - gap * buckets.length) / buckets.length));
-  const offX = Math.max(0, (W - (barW + gap) * buckets.length) / 2);
-  buckets.forEach((b, i) => {
+  const barW = Math.max(2, Math.floor((W - gap * full.length) / full.length));
+  const offX = Math.max(0, (W - (barW + gap) * full.length) / 2);
+  full.forEach((b, i) => {
     const barH = Math.max(2, Math.round((b.count / max) * (H - 4)));
     ctx.fillStyle = b.count > 0 ? '#f85149' : '#30363d';
     ctx.beginPath();
@@ -685,7 +696,7 @@ async function loadStats() {
     document.getElementById('stat-failed').textContent   = fmt(d.failed);
     document.getElementById('stat-accepted').textContent = fmt(d.accepted);
     document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
-    drawTimeline(d.timeline);
+    drawTimeline(d.timeline, w);
     renderTopList('top-ips', 'Top Attacker IPs', d.top_ips,
       t => `<span class="name ip">${esc(t.ip)}</span>`, t => t.count);
     renderTopList('top-usernames', 'Top Usernames', d.top_usernames,
