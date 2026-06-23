@@ -256,6 +256,7 @@ if [[ ! "$ans" =~ ^[Nn]$ ]]; then
   GEOIP_TMP=$(mktemp "$INSTALL_DIR/data/geo.mmdb.XXXXXX")
   info "Downloading DB-IP Lite ${YEAR_MONTH}…"
   if curl -fsSL "$GEOIP_URL" | gunzip > "$GEOIP_TMP" && mv "$GEOIP_TMP" "$INSTALL_DIR/data/geo.mmdb"; then
+    chmod 644 "$INSTALL_DIR/data/geo.mmdb"
     info "GeoIP database saved to $INSTALL_DIR/data/geo.mmdb"
   else
     rm -f "$GEOIP_TMP"
