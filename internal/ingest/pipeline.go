@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/unwinds/logfort/internal/geo"
 	"github.com/unwinds/logfort/internal/parse"
@@ -59,8 +60,21 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		s := src
 		go func() {
 			defer srcWg.Done()
-			if err := s.Start(ctx, lines); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("source error", "err", err)
+			backoff := time.Second
+			for {
+				err := s.Start(ctx, lines)
+				if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+					return
+				}
+				slog.Error("source error, retrying", "err", err, "backoff", backoff)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
 			}
 		}()
 	}

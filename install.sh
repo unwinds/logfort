@@ -76,20 +76,20 @@ fi
 
 # ── fail2ban (optional) ───────────────────────────────────────────────────────
 FAIL2BAN_LOG=""
-FAIL2BAN_JUST_INSTALLED=false
 if ! command -v fail2ban-client &>/dev/null; then
   ask "fail2ban is not installed. Install it now? [y/N]"
   read -r ans
   if [[ "$ans" =~ ^[Yy]$ ]] && [[ -n "$PKG_MGR" ]]; then
     install_pkg fail2ban
     systemctl enable --now fail2ban || true
-    FAIL2BAN_JUST_INSTALLED=true
   fi
 fi
 if command -v fail2ban-client &>/dev/null; then
-  if $FAIL2BAN_JUST_INSTALLED || [[ -f /var/log/fail2ban.log ]]; then
+  if [[ -f /var/log/fail2ban.log ]]; then
     FAIL2BAN_LOG="/var/log/fail2ban.log"
     info "fail2ban log: $FAIL2BAN_LOG"
+  else
+    warn "fail2ban log not found at /var/log/fail2ban.log — fail2ban may be logging via journald on this system. Skipping fail2ban log ingestion."
   fi
 fi
 
@@ -178,6 +178,9 @@ if [[ "$BACKEND" == "journald" ]]; then
   VOLUMES="${VOLUMES}"$'\n'"      - /var/log/journal:/var/log/journal:ro"
   VOLUMES="${VOLUMES}"$'\n'"      - /run/systemd/journal:/run/systemd/journal:ro"
   VOLUMES="${VOLUMES}"$'\n'"      - /etc/machine-id:/etc/machine-id:ro"
+  if [[ -n "$FAIL2BAN_LOG" ]]; then
+    VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
+  fi
   VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
 
   # Detect the systemd-journal GID on this host so the container user can read
@@ -188,6 +191,9 @@ if [[ "$BACKEND" == "journald" ]]; then
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_JOURNALD_UNIT=${JOURNALD_UNIT}"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
+  if [[ -n "$FAIL2BAN_LOG" ]]; then
+    ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_FAIL2BAN_LOG=/host/fail2ban.log"
+  fi
 else
   VOLUMES="      - ${AUTH_LOG}:/host/auth.log:ro"
   LOG_PATHS="/host/auth.log"

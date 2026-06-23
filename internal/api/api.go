@@ -23,6 +23,8 @@ import (
 // Server holds API dependencies and implements http.Handler.
 type Server struct {
 	cfg       *config.Config
+	envCfg    config.Config // notify fields as loaded from env vars (pre-DB-overlay); gates UI writes
+	cfgMu     sync.RWMutex // protects runtime-mutable notify fields of cfg
 	store     store.Store
 	mux       *http.ServeMux
 	handler   http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
@@ -35,6 +37,7 @@ type Server struct {
 	banLim    *rateLimiter // limits ban requests only; unban is not throttled
 	notifyMu  sync.RWMutex
 	notifyFn  func(*parse.Event)
+	notifyDisp *notify.Dispatcher // tracked for Stop() on replacement
 }
 
 // New creates and configures the HTTP server.
@@ -64,10 +67,37 @@ func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
 	s.allowlist = al
 }
 
-// SetNotifyFunc wires a notification callback. Thread-safe; can be called at runtime.
+// SetEnvNotifyConfig records which notify fields were set by env vars.
+// Fields non-empty in c will not be overridden at runtime by POST /api/settings.
+func (s *Server) SetEnvNotifyConfig(c config.Config) {
+	s.envCfg = c
+}
+
+// SetDispatcher wires a notify dispatcher, stopping the previous one.
+// Thread-safe; can be called at runtime. Accepts nil to disable notifications.
+func (s *Server) SetDispatcher(d *notify.Dispatcher) {
+	s.swapDispatcher(d)
+}
+
+// SetNotifyFunc wires a raw notification callback. Thread-safe; can be called at runtime.
+// Does not stop any previous Dispatcher — use SetDispatcher when possible.
 func (s *Server) SetNotifyFunc(fn func(*parse.Event)) {
 	s.notifyMu.Lock()
 	s.notifyFn = fn
+	s.notifyMu.Unlock()
+}
+
+func (s *Server) swapDispatcher(d *notify.Dispatcher) {
+	s.notifyMu.Lock()
+	if s.notifyDisp != nil {
+		s.notifyDisp.Stop()
+	}
+	s.notifyDisp = d
+	if d != nil {
+		s.notifyFn = d.Notify
+	} else {
+		s.notifyFn = nil
+	}
 	s.notifyMu.Unlock()
 }
 
@@ -417,12 +447,19 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 // --- settings handlers ---
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	s.cfgMu.RLock()
+	token := s.cfg.NotifyTelegramToken
+	chat := s.cfg.NotifyTelegramChat
+	discord := s.cfg.NotifyDiscordURL
+	webhook := s.cfg.NotifyWebhookURL
+	rules := strings.Join(s.cfg.NotifyRules, ",")
+	s.cfgMu.RUnlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"telegram_token":   s.cfg.NotifyTelegramToken,
-		"telegram_chat_id": s.cfg.NotifyTelegramChat,
-		"discord_url":      s.cfg.NotifyDiscordURL,
-		"webhook_url":      s.cfg.NotifyWebhookURL,
-		"rules":            strings.Join(s.cfg.NotifyRules, ","),
+		"telegram_token":   token,
+		"telegram_chat_id": chat,
+		"discord_url":      discord,
+		"webhook_url":      webhook,
+		"rules":            rules,
 	})
 }
 
@@ -439,6 +476,44 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build the effective config: start from current, apply request values only
+	// for fields not pinned by env vars.
+	s.cfgMu.RLock()
+	proposed := *s.cfg
+	s.cfgMu.RUnlock()
+
+	if s.envCfg.NotifyTelegramToken == "" {
+		proposed.NotifyTelegramToken = req.TelegramToken
+	}
+	if s.envCfg.NotifyTelegramChat == "" {
+		proposed.NotifyTelegramChat = req.TelegramChat
+	}
+	if s.envCfg.NotifyDiscordURL == "" {
+		proposed.NotifyDiscordURL = req.DiscordURL
+	}
+	if s.envCfg.NotifyWebhookURL == "" {
+		proposed.NotifyWebhookURL = req.WebhookURL
+	}
+	if len(s.envCfg.NotifyRules) == 0 {
+		proposed.NotifyRules = nil
+		for _, rule := range strings.Split(req.Rules, ",") {
+			if rule = strings.TrimSpace(rule); rule != "" {
+				proposed.NotifyRules = append(proposed.NotifyRules, rule)
+			}
+		}
+	}
+
+	// Validate by attempting to build the dispatcher before touching the DB.
+	// notify.New returns (nil, err) only on bad rule syntax; (nil, nil) is valid
+	// and means "no notifications configured".
+	d, err := notify.New(&proposed, s.store)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
+		return
+	}
+
+	// Persist to DB (always save request values, even if env-pinned in-memory,
+	// so they take effect if the env var is later removed).
 	pairs := [][2]string{
 		{"notify.telegram.token", req.TelegramToken},
 		{"notify.telegram.chat_id", req.TelegramChat},
@@ -454,41 +529,30 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply to in-memory config.
-	s.cfg.NotifyTelegramToken = req.TelegramToken
-	s.cfg.NotifyTelegramChat = req.TelegramChat
-	s.cfg.NotifyDiscordURL = req.DiscordURL
-	s.cfg.NotifyWebhookURL = req.WebhookURL
-	s.cfg.NotifyRules = nil
-	for _, rule := range strings.Split(req.Rules, ",") {
-		if rule = strings.TrimSpace(rule); rule != "" {
-			s.cfg.NotifyRules = append(s.cfg.NotifyRules, rule)
-		}
-	}
+	// Apply effective config to in-memory state.
+	s.cfgMu.Lock()
+	s.cfg.NotifyTelegramToken = proposed.NotifyTelegramToken
+	s.cfg.NotifyTelegramChat = proposed.NotifyTelegramChat
+	s.cfg.NotifyDiscordURL = proposed.NotifyDiscordURL
+	s.cfg.NotifyWebhookURL = proposed.NotifyWebhookURL
+	s.cfg.NotifyRules = proposed.NotifyRules
+	s.cfgMu.Unlock()
 
-	// Rebuild dispatcher with updated config.
-	d, err := notify.New(s.cfg, s.store)
-	if err != nil {
-		slog.Warn("notify rebuild after settings save", "err", err)
-	}
-	if d != nil {
-		s.SetNotifyFunc(d.Notify)
-	} else {
-		s.SetNotifyFunc(nil)
-	}
+	// Swap dispatcher, stopping in-flight goroutines of the previous one.
+	s.swapDispatcher(d)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	s.notifyMu.RLock()
-	fn := s.notifyFn
+	hasNotifier := s.notifyFn != nil
 	s.notifyMu.RUnlock()
-	if fn == nil {
+	if !hasNotifier {
 		writeError(w, http.StatusBadRequest, "no notifiers configured — save settings first")
 		return
 	}
-	fn(&parse.Event{
+	s.NotifyEvent(&parse.Event{
 		TS:        time.Now().UTC(),
 		IP:        "203.0.113.1",
 		EventType: "ban",

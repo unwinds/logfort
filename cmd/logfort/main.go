@@ -41,6 +41,10 @@ func main() {
 	}
 	defer st.Close()
 
+	// Save env-var-only notify values before DB overlay so the API server can
+	// enforce "env vars always win" even when settings are updated at runtime.
+	envCfg := *cfg
+
 	// Overlay notification settings saved via the UI (env vars take priority).
 	if dbSettings, err := st.GetAllSettings(context.Background()); err == nil {
 		cfg.OverlaySettings(dbSettings)
@@ -107,11 +111,10 @@ func main() {
 	pipeline.SetGeo(looker)
 
 	srv := api.New(cfg, st, version)
+	srv.SetEnvNotifyConfig(envCfg)
 	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
-	if dispatcher != nil {
-		srv.SetNotifyFunc(dispatcher.Notify)
-	}
+	srv.SetDispatcher(dispatcher) // nil-safe; wires Dispatcher.Notify and enables Stop() on swap
 	pipeline.SetPublishHook(func(ev *parse.Event) {
 		srv.PublishEvent(ev)
 		srv.NotifyEvent(ev) // uses current dispatcher, swappable via settings API
