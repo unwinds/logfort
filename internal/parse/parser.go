@@ -168,7 +168,7 @@ func parseSSHDLine(line string) (*Event, error) {
 		return nil, ErrNoMatch
 	}
 
-	if proc != "sshd" {
+	if proc != "sshd" && proc != "sshd-session" {
 		return nil, ErrNoMatch
 	}
 

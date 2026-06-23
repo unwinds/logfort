@@ -96,6 +96,14 @@ func TestParseSSHDLines(t *testing.T) {
 			wantIP:   "203.0.113.20",
 			wantUser: "root",
 		},
+		{
+			name:     "sshd-session proc (Debian 13 / OpenSSH 9+)",
+			line:     "Jun 23 19:57:18 debiantest sshd-session[6199]: Failed password for invalid user fakeuser from 178.90.224.213 port 30896 ssh2",
+			wantType: "failed_password",
+			wantIP:   "178.90.224.213",
+			wantUser: "fakeuser",
+			wantPort: 30896,
+		},
 		// No-match cases.
 		{
 			name:    "cron line",
