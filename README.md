@@ -53,6 +53,14 @@ ssh -L 8080:localhost:8080 user@yourserver
 
 ---
 
+## Updating
+
+```bash
+cd /opt/logfort && docker compose pull && docker compose up -d
+```
+
+---
+
 ## GeoIP (optional, recommended)
 
 Download a free [DB-IP Lite](https://db-ip.com/db/lite/city) database for the attack map — no account required:
