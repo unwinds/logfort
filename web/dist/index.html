@@ -170,7 +170,7 @@
     #section-events { display: none; flex-direction: column; height: 100%; }
     #section-bans   { display: none; flex-direction: column; height: 100%; }
     #section-map    { display: none; flex-direction: column; height: 100%; }
-    #section-settings { display: none; flex-direction: column; overflow-y: auto; }
+    #section-settings { display: none; flex-direction: column; }
 
     .section-toolbar {
       display: flex; align-items: center; gap: 10px; padding: 10px 16px;
@@ -229,7 +229,21 @@
     }
 
     /* ── Settings ─────────────────────────────────────────────────────────── */
-    .settings-body { padding: 24px; max-width: 760px; }
+    .settings-tabs {
+      display: flex; gap: 2px; padding: 0 24px;
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .settings-tab {
+      padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer;
+      color: var(--muted); background: none; border: none; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; transition: color .12s;
+    }
+    .settings-tab:hover { color: var(--text); }
+    .settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .settings-tab-panel { display: none; overflow-y: auto; flex: 1; }
+    .settings-tab-panel.active { display: block; }
+
+    .settings-body { padding: 24px; max-width: 800px; }
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
     .settings-card {
@@ -251,7 +265,7 @@
 
     .settings-fields { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
     .field-group { display: flex; flex-direction: column; gap: 4px; }
-    .field-group label { font-size: 11px; color: var(--muted); font-weight: 500; }
+    .field-group > label { font-size: 11px; color: var(--muted); font-weight: 500; }
     .field-row { display: flex; gap: 6px; align-items: center; }
     .field-group input[type=text],
     .field-group input[type=password],
@@ -262,10 +276,11 @@
     }
     .field-group input:focus { outline: none; border-color: var(--accent); }
     .field-group input::placeholder { color: var(--muted); font-family: inherit; }
+    .field-hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
     .rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .rule-item { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
-    .rule-item input[type=checkbox] { margin-top: 1px; accent-color: var(--accent); }
+    .rule-item input[type=checkbox] { margin-top: 1px; accent-color: var(--accent); flex-shrink: 0; }
     .rule-desc { font-size: 12px; color: var(--text); }
     .rule-desc small { display: block; color: var(--muted); font-size: 10px; margin-top: 1px; }
 
@@ -283,6 +298,33 @@
     .settings-status { font-size: 12px; margin-left: 8px; }
     .settings-status.ok   { color: var(--success); }
     .settings-status.err  { color: var(--danger); }
+
+    /* System info rows inside settings-card */
+    .sysinfo-row {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+      padding: 5px 0; border-bottom: 1px solid var(--border);
+    }
+    .sysinfo-row:last-child { border-bottom: none; }
+    .sysinfo-key { font-size: 12px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+    .sysinfo-val { font-size: 12px; font-family: monospace; text-align: right; word-break: break-all; }
+    .sysinfo-ok  { color: var(--success); }
+    .sysinfo-off { color: var(--muted); }
+    .sysinfo-warn { color: var(--warn); }
+
+    /* Toggle switch */
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; }
+    .toggle { position: relative; width: 36px; height: 20px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; background: var(--border); border-radius: 20px;
+      cursor: pointer; transition: background .2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px;
+      background: white; border-radius: 50%; transition: transform .2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
 
     /* ── Misc ─────────────────────────────────────────────────────────────── */
     .empty-state { display: flex; align-items: center; justify-content: center; height: 120px; color: var(--muted); font-size: 13px; }
@@ -482,110 +524,194 @@
 
     <!-- ── Settings ───────────────────────────────────────────────────────── -->
     <div id="section-settings">
-      <div class="settings-body">
-        <div class="settings-grid">
 
-          <!-- Telegram -->
-          <div class="settings-card">
-            <div class="settings-card-hd">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent)"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.04 9.607c-.15.67-.54.835-1.094.52l-3-2.21-1.447 1.393c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.332-.373-.12l-6.871 4.326-2.962-.924c-.643-.202-.657-.643.136-.953l11.566-4.46c.537-.194 1.006.13.917.602z"/></svg>
-              <h3>Telegram</h3>
-              <span class="notifier-status" id="tg-status-badge">inactive</span>
+      <!-- Tabs -->
+      <div class="settings-tabs">
+        <button class="settings-tab active" onclick="switchSettingsTab('general')" id="stab-general">General</button>
+        <button class="settings-tab" onclick="switchSettingsTab('notifications')" id="stab-notifications">Notifications</button>
+      </div>
+
+      <!-- ── General tab ────────────────────────────────────────────────── -->
+      <div class="settings-tab-panel active" id="spanel-general">
+        <div class="settings-body">
+          <div class="settings-grid">
+
+            <!-- System info (read-only) -->
+            <div class="settings-card wide">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--accent)"><path d="M1 3a1 1 0 011-1h12a1 1 0 011 1v8a1 1 0 01-1 1H8.5v1H10a.5.5 0 010 1H6a.5.5 0 010-1h1.5v-1H2a1 1 0 01-1-1V3zm13 0H2v8h12V3z"/></svg>
+                <h3>System</h3>
+                <span style="margin-left:auto;font-size:11px;color:var(--muted)">read-only</span>
+              </div>
+              <div class="settings-fields" id="system-info-rows">
+                <div class="sysinfo-row"><span class="sysinfo-key">Loading…</span></div>
+              </div>
             </div>
-            <div class="settings-fields">
-              <div class="field-group">
-                <label>Bot Token</label>
-                <div class="field-row">
-                  <input type="password" id="tg-token" placeholder="1234567890:ABCdef…" autocomplete="off">
-                  <button class="btn btn-muted" onclick="togglePwd('tg-token')" style="flex-shrink:0;padding:6px 8px;font-size:10px;">show</button>
+
+            <!-- Data retention -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--warn)"><path d="M14 4.5V14a2 2 0 01-2 2H4a2 2 0 01-2-2V2a2 2 0 012-2h5.5L14 4.5zm-3 0A1.5 1.5 0 019.5 3V1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V4.5h-2z"/><path d="M4.5 9.5a.5.5 0 01.5-.5h6a.5.5 0 010 1H5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5h6a.5.5 0 010 1H5a.5.5 0 01-.5-.5zm0-4a.5.5 0 01.5-.5h3a.5.5 0 010 1H5a.5.5 0 01-.5-.5z"/></svg>
+                <h3>Data Retention</h3>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Keep events for (days)</label>
+                  <input type="number" id="retention-days" min="1" max="3650" value="90" style="width:120px">
+                  <span class="field-hint">Events older than this are deleted daily.</span>
                 </div>
               </div>
-              <div class="field-group">
-                <label>Chat ID</label>
-                <input type="text" id="tg-chat" placeholder="-100123456789">
-              </div>
             </div>
-          </div>
 
-          <!-- Discord -->
-          <div class="settings-card">
-            <div class="settings-card-hd">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:#5865F2"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028 14.09 14.09 0 001.226-1.994.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
-              <h3>Discord</h3>
-              <span class="notifier-status" id="discord-status-badge">inactive</span>
-            </div>
-            <div class="settings-fields">
-              <div class="field-group">
-                <label>Webhook URL</label>
-                <input type="text" id="discord-url" placeholder="https://discord.com/api/webhooks/…">
+            <!-- Auto-ban -->
+            <div class="settings-card" id="autoban-card">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--danger)"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zM2 8a6 6 0 1112 0A6 6 0 012 8zm9.354-2.646a.5.5 0 010 .707l-4 4a.5.5 0 01-.708 0l-2-2a.5.5 0 11.708-.708L7 8.793l3.646-3.647a.5.5 0 01.708 0z"/></svg>
+                <h3>Auto-ban</h3>
+                <span class="notifier-status" id="autoban-status-badge">disabled</span>
               </div>
-            </div>
-          </div>
-
-          <!-- Webhook -->
-          <div class="settings-card">
-            <div class="settings-card-hd">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--muted)"><path d="M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v7a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 013 11.5v-7zM4.5 4a.5.5 0 00-.5.5v7a.5.5 0 00.5.5h7a.5.5 0 00.5-.5v-7a.5.5 0 00-.5-.5h-7z"/><path d="M6 7.5a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3A.5.5 0 016 7.5zm0 2a.5.5 0 01.5-.5h1.5a.5.5 0 010 1H6.5A.5.5 0 016 9.5z"/></svg>
-              <h3>Webhook</h3>
-              <span class="notifier-status" id="webhook-status-badge">inactive</span>
-            </div>
-            <div class="settings-fields">
-              <div class="field-group">
-                <label>URL (receives POST JSON)</label>
-                <input type="text" id="webhook-url" placeholder="https://yourserver.com/hook">
-              </div>
-            </div>
-          </div>
-
-          <!-- Rules -->
-          <div class="settings-card wide">
-            <div class="settings-card-hd">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--warn)"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3.25a.75.75 0 01-1.5 0V5zm.75 6a1 1 0 110-2 1 1 0 010 2z"/></svg>
-              <h3>Alert Rules</h3>
-            </div>
-            <div class="settings-fields">
-              <div class="rules-grid">
-                <label class="rule-item">
-                  <input type="checkbox" id="rule-ban">
-                  <div class="rule-desc">Ban event<small>Alert when an IP is banned</small></div>
+              <div class="settings-fields">
+                <label class="toggle-wrap" style="cursor:pointer">
+                  <span class="toggle">
+                    <input type="checkbox" id="autoban-enabled" onchange="updateAutoBanBadge()">
+                    <span class="toggle-slider"></span>
+                  </span>
+                  <span style="font-size:12px">Enable automatic banning</span>
                 </label>
-                <label class="rule-item">
-                  <input type="checkbox" id="rule-accepted">
-                  <div class="rule-desc">Accepted login<small>Alert on successful SSH login</small></div>
-                </label>
-                <label class="rule-item">
-                  <input type="checkbox" id="rule-country">
-                  <div class="rule-desc">New country<small>Alert on first login from a new country</small></div>
-                </label>
-                <label class="rule-item">
-                  <input type="checkbox" id="rule-threshold">
-                  <div class="rule-desc">
-                    <div class="threshold-row">
-                      Threshold:
-                      <input type="number" id="threshold-n" value="100" min="1">
-                      <span>events per</span>
-                      <select id="threshold-dur">
-                        <option value="15m">15m</option>
-                        <option value="1h" selected>1h</option>
-                        <option value="6h">6h</option>
-                        <option value="24h">24h</option>
-                      </select>
-                    </div>
-                    <small>Alert when single IP exceeds N events in window</small>
+                <div class="field-group">
+                  <label>Ban threshold</label>
+                  <div class="threshold-row">
+                    <input type="number" id="autoban-threshold" value="50" min="1">
+                    <span>events per</span>
+                    <select id="autoban-window">
+                      <option value="15m">15m</option>
+                      <option value="1h" selected>1h</option>
+                      <option value="6h">6h</option>
+                      <option value="24h">24h</option>
+                    </select>
                   </div>
-                </label>
+                  <span class="field-hint">IP exceeding this count in the window is banned automatically.</span>
+                </div>
               </div>
             </div>
+
+          </div><!-- /settings-grid -->
+
+          <div class="settings-actions">
+            <button class="btn btn-primary" onclick="saveGeneralSettings()" id="btn-save-general">Save General Settings</button>
+            <span class="settings-status" id="general-settings-status"></span>
           </div>
-
-        </div><!-- /settings-grid -->
-
-        <div class="settings-actions">
-          <button class="btn btn-success" onclick="testNotify()" id="btn-test">Test Notification</button>
-          <button class="btn btn-primary" onclick="saveSettings()" id="btn-save">Save Settings</button>
-          <span class="settings-status" id="settings-status"></span>
         </div>
       </div>
+
+      <!-- ── Notifications tab ──────────────────────────────────────────── -->
+      <div class="settings-tab-panel" id="spanel-notifications">
+        <div class="settings-body">
+          <div class="settings-grid">
+
+            <!-- Telegram -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent)"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.04 9.607c-.15.67-.54.835-1.094.52l-3-2.21-1.447 1.393c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.332-.373-.12l-6.871 4.326-2.962-.924c-.643-.202-.657-.643.136-.953l11.566-4.46c.537-.194 1.006.13.917.602z"/></svg>
+                <h3>Telegram</h3>
+                <span class="notifier-status" id="tg-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Bot Token</label>
+                  <div class="field-row">
+                    <input type="password" id="tg-token" placeholder="1234567890:ABCdef…" autocomplete="off">
+                    <button class="btn btn-muted" onclick="togglePwd('tg-token')" style="flex-shrink:0;padding:6px 8px;font-size:10px;">show</button>
+                  </div>
+                </div>
+                <div class="field-group">
+                  <label>Chat ID</label>
+                  <input type="text" id="tg-chat" placeholder="-100123456789">
+                </div>
+              </div>
+            </div>
+
+            <!-- Discord -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:#5865F2"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028 14.09 14.09 0 001.226-1.994.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+                <h3>Discord</h3>
+                <span class="notifier-status" id="discord-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Webhook URL</label>
+                  <input type="text" id="discord-url" placeholder="https://discord.com/api/webhooks/…">
+                </div>
+              </div>
+            </div>
+
+            <!-- Webhook -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--muted)"><path d="M3 4.5A1.5 1.5 0 014.5 3h7A1.5 1.5 0 0113 4.5v7a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 013 11.5v-7zM4.5 4a.5.5 0 00-.5.5v7a.5.5 0 00.5.5h7a.5.5 0 00.5-.5v-7a.5.5 0 00-.5-.5h-7z"/><path d="M6 7.5a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3A.5.5 0 016 7.5zm0 2a.5.5 0 01.5-.5h1.5a.5.5 0 010 1H6.5A.5.5 0 016 9.5z"/></svg>
+                <h3>Webhook</h3>
+                <span class="notifier-status" id="webhook-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>URL (receives POST JSON)</label>
+                  <input type="text" id="webhook-url" placeholder="https://yourserver.com/hook">
+                </div>
+              </div>
+            </div>
+
+            <!-- Alert Rules -->
+            <div class="settings-card wide">
+              <div class="settings-card-hd">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color:var(--warn)"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3.25a.75.75 0 01-1.5 0V5zm.75 6a1 1 0 110-2 1 1 0 010 2z"/></svg>
+                <h3>Alert Rules</h3>
+              </div>
+              <div class="settings-fields">
+                <div class="rules-grid">
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-ban">
+                    <div class="rule-desc">Ban event<small>Alert when an IP is banned</small></div>
+                  </label>
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-accepted">
+                    <div class="rule-desc">Accepted login<small>Alert on successful SSH login</small></div>
+                  </label>
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-country">
+                    <div class="rule-desc">New country<small>Alert on first login from a new country</small></div>
+                  </label>
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-threshold">
+                    <div class="rule-desc">
+                      <div class="threshold-row">
+                        Threshold:
+                        <input type="number" id="threshold-n" value="100" min="1">
+                        <span>events per</span>
+                        <select id="threshold-dur">
+                          <option value="15m">15m</option>
+                          <option value="1h" selected>1h</option>
+                          <option value="6h">6h</option>
+                          <option value="24h">24h</option>
+                        </select>
+                      </div>
+                      <small>Alert when single IP exceeds N events in window</small>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /settings-grid -->
+
+          <div class="settings-actions">
+            <button class="btn btn-success" onclick="testNotify()" id="btn-test">Test Notification</button>
+            <button class="btn btn-primary" onclick="saveSettings()" id="btn-save">Save Notifications</button>
+            <span class="settings-status" id="settings-status"></span>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /settings -->
 
   </div><!-- /content -->
@@ -647,7 +773,16 @@ function switchSection(s) {
   }
   if (s === 'bans') loadBans();
   if (s === 'events') { eventsPage = 0; loadEventsPage(); }
-  if (s === 'settings') loadSettings();
+  if (s === 'settings') {
+    // Load whichever settings tab is currently active.
+    const activeTab = document.querySelector('.settings-tab.active');
+    if (activeTab && activeTab.id === 'stab-general') {
+      loadSystemInfo();
+      loadGeneralSettings();
+    } else {
+      loadNotifySettings();
+    }
+  }
 }
 
 // ── Timeline ────────────────────────────────────────────────────────────────
@@ -1005,8 +1140,99 @@ async function loadMap() {
   } catch(e) { console.error('map', e); }
 }
 
-// ── Settings ─────────────────────────────────────────────────────────────────
-async function loadSettings() {
+// ── Settings tabs ─────────────────────────────────────────────────────────────
+function switchSettingsTab(tab) {
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.settings-tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('stab-' + tab).classList.add('active');
+  document.getElementById('spanel-' + tab).classList.add('active');
+  if (tab === 'general') { loadSystemInfo(); loadGeneralSettings(); }
+  if (tab === 'notifications') loadNotifySettings();
+}
+
+// ── System info (read-only) ──────────────────────────────────────────────────
+async function loadSystemInfo() {
+  try {
+    const d = await fetch('/api/system').then(r => r.json());
+    const rows = [
+      { k:'Backend',    v: d.backend },
+      { k:'Log paths',  v: (d.log_paths||[]).join(', ') || '—' },
+      d.fail2ban_log ? { k:'Fail2ban log', v: d.fail2ban_log } : null,
+      d.backend==='journald' ? { k:'Journald unit', v: d.journald_unit } : null,
+      { k:'GeoIP',      v: d.geoip_enabled ? 'Enabled' : 'Disabled', cls: d.geoip_enabled?'sysinfo-ok':'sysinfo-off' },
+      { k:'Responder',  v: d.responder_enabled ? d.responder_backend : 'Disabled', cls: d.responder_enabled?'sysinfo-ok':'sysinfo-off' },
+      d.responder_enabled && d.responder_backend==='fail2ban' ? { k:'Fail2ban jail', v: d.fail2ban_jail } : null,
+      { k:'Auth',       v: d.auth_enabled ? 'Enabled' : 'Disabled', cls: d.auth_enabled?'sysinfo-warn':'sysinfo-off' },
+      { k:'Listen',     v: d.listen },
+    ].filter(Boolean);
+
+    const el = document.getElementById('system-info-rows');
+    el.innerHTML = rows.map(row =>
+      `<div class="sysinfo-row">
+        <span class="sysinfo-key">${esc(row.k)}</span>
+        <span class="sysinfo-val ${row.cls||''}">${esc(row.v||'—')}</span>
+      </div>`
+    ).join('');
+
+    // Show/hide auto-ban card (only relevant when responder is enabled)
+    const ac = document.getElementById('autoban-card');
+    if (ac) ac.style.display = d.responder_enabled ? '' : 'none';
+  } catch(e) { console.error('system info', e); }
+}
+
+// ── General settings ─────────────────────────────────────────────────────────
+async function loadGeneralSettings() {
+  try {
+    const d = await fetch('/api/settings').then(r => r.json());
+    document.getElementById('retention-days').value = d.retention_days || 90;
+    document.getElementById('autoban-enabled').checked = !!d.autoban_enabled;
+    document.getElementById('autoban-threshold').value = d.autoban_threshold || 50;
+    const abWin = document.getElementById('autoban-window');
+    if (d.autoban_window && [...abWin.options].some(o => o.value === d.autoban_window)) {
+      abWin.value = d.autoban_window;
+    }
+    updateAutoBanBadge();
+  } catch(e) { console.error('general settings load', e); }
+}
+
+function updateAutoBanBadge() {
+  const enabled = document.getElementById('autoban-enabled').checked;
+  const badge = document.getElementById('autoban-status-badge');
+  if (badge) {
+    badge.textContent = enabled ? 'active' : 'disabled';
+    badge.className = 'notifier-status' + (enabled ? ' active' : '');
+  }
+}
+
+async function saveGeneralSettings() {
+  const retDays = parseInt(document.getElementById('retention-days').value) || 90;
+  const body = {
+    retention_days:    retDays,
+    autoban_enabled:   document.getElementById('autoban-enabled').checked,
+    autoban_threshold: parseInt(document.getElementById('autoban-threshold').value) || 50,
+    autoban_window:    document.getElementById('autoban-window').value,
+  };
+  const btn = document.getElementById('btn-save-general');
+  const status = document.getElementById('general-settings-status');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/settings', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    status.textContent = '✓ Saved'; status.className = 'settings-status ok';
+    updateAutoBanBadge();
+  } catch(e) {
+    status.textContent = '✗ ' + e.message; status.className = 'settings-status err';
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+}
+
+// ── Notification settings ─────────────────────────────────────────────────────
+async function loadNotifySettings() {
   try {
     const d = await fetch('/api/settings').then(r => r.json());
     document.getElementById('tg-token').value    = d.telegram_token   || '';
@@ -1014,12 +1240,10 @@ async function loadSettings() {
     document.getElementById('discord-url').value = d.discord_url      || '';
     document.getElementById('webhook-url').value = d.webhook_url      || '';
 
-    // Status badges
     setBadge('tg-status-badge', !!(d.telegram_token && d.telegram_chat_id));
     setBadge('discord-status-badge', !!d.discord_url);
     setBadge('webhook-status-badge', !!d.webhook_url);
 
-    // Parse rules
     const rules = (d.rules || '').split(',').map(r => r.trim()).filter(Boolean);
     document.getElementById('rule-ban').checked      = rules.includes('ban');
     document.getElementById('rule-accepted').checked = rules.includes('accepted_login');
@@ -1035,8 +1259,11 @@ async function loadSettings() {
     } else {
       document.getElementById('rule-threshold').checked = false;
     }
-  } catch(e) { console.error('settings load', e); }
+  } catch(e) { console.error('notify settings load', e); }
 }
+
+// Keep old name as alias so switchSection('settings') still triggers a load.
+function loadSettings() { loadNotifySettings(); }
 
 function setBadge(id, active) {
   const el = document.getElementById(id);
@@ -1055,6 +1282,7 @@ async function saveSettings() {
     const dur = document.getElementById('threshold-dur').value || '1h';
     rules.push(`threshold:${n}/${dur}`);
   }
+  // Only send notification fields (null = don't change general settings).
   const body = {
     telegram_token:   document.getElementById('tg-token').value.trim(),
     telegram_chat_id: document.getElementById('tg-chat').value.trim(),

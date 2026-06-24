@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+const (
+	DefaultRetentionDays  = 90
+	DefaultAutoBanThreshold = 50
+	DefaultAutoBanWindow    = "1h"
+)
+
 // Config holds all runtime configuration loaded from environment variables.
 type Config struct {
 	Listen        string
@@ -35,6 +41,11 @@ type Config struct {
 	NotifyDiscordURL    string
 	NotifyRules   []string
 	LogLevel      slog.Level
+
+	// UI-configurable settings (persisted in DB; no env vars)
+	AutoBanEnabled   bool
+	AutoBanThreshold int
+	AutoBanWindow    string
 }
 
 // Load reads configuration from environment variables with sane defaults.
@@ -135,6 +146,7 @@ func Load() (*Config, error) {
 
 // OverlaySettings fills in empty notify fields from a key-value map (e.g. from
 // the DB settings table). Env-var-set values (already non-empty) take priority.
+// UI-only settings (autoban, retention) are always overlaid from the DB.
 func (c *Config) OverlaySettings(s map[string]string) {
 	if c.NotifyTelegramToken == "" {
 		c.NotifyTelegramToken = s["notify.telegram.token"]
@@ -156,6 +168,30 @@ func (c *Config) OverlaySettings(s map[string]string) {
 				}
 			}
 		}
+	}
+
+	// Retention days — DB wins if set (UI override of env default).
+	if v := s["general.retention_days"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.RetentionDays = n
+		}
+	}
+
+	// Auto-ban — purely UI-controlled, always overlay from DB.
+	c.AutoBanEnabled = s["autoban.enabled"] == "true"
+	if v := s["autoban.threshold"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AutoBanThreshold = n
+		}
+	}
+	if c.AutoBanThreshold == 0 {
+		c.AutoBanThreshold = DefaultAutoBanThreshold
+	}
+	if v := s["autoban.window"]; v != "" {
+		c.AutoBanWindow = v
+	}
+	if c.AutoBanWindow == "" {
+		c.AutoBanWindow = DefaultAutoBanWindow
 	}
 }
 

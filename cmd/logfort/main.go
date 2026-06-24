@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -75,6 +76,7 @@ func main() {
 
 	// Open GeoIP database (optional — graceful fallback to noop).
 	var looker geo.Looker = geo.NoopLooker{}
+	geoIPLoaded := false
 	if cfg.GeoIPDB != "" {
 		geoDB, err := geo.Open(cfg.GeoIPDB)
 		if err != nil {
@@ -83,6 +85,7 @@ func main() {
 		} else {
 			defer geoDB.Close()
 			looker = geoDB
+			geoIPLoaded = true
 			slog.Info("GeoIP database loaded", "path", cfg.GeoIPDB)
 		}
 	}
@@ -112,12 +115,14 @@ func main() {
 
 	srv := api.New(cfg, st, version)
 	srv.SetEnvNotifyConfig(envCfg)
+	srv.SetGeoIPEnabled(geoIPLoaded)
 	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
 	srv.SetDispatcher(dispatcher) // nil-safe; wires Dispatcher.Notify and enables Stop() on swap
 	pipeline.SetPublishHook(func(ev *parse.Event) {
 		srv.PublishEvent(ev)
-		srv.NotifyEvent(ev) // uses current dispatcher, swappable via settings API
+		srv.NotifyEvent(ev)   // uses current dispatcher, swappable via settings API
+		srv.AutoBanEvent(ev)  // auto-ban if threshold exceeded and feature is enabled
 	})
 
 	httpSrv := &http.Server{
@@ -147,7 +152,8 @@ func main() {
 		}
 	}()
 
-	// Start retention cleanup goroutine.
+	// Start retention cleanup goroutine — reads current retention_days from DB on each tick
+	// so that changes made via the settings UI take effect without a restart.
 	go runRetention(ctx, st, cfg.RetentionDays)
 
 	// Wait for shutdown signal.
@@ -162,7 +168,7 @@ func main() {
 	srv.Close()
 }
 
-func runRetention(ctx context.Context, st store.Store, days int) {
+func runRetention(ctx context.Context, st store.Store, defaultDays int) {
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	for {
@@ -170,6 +176,13 @@ func runRetention(ctx context.Context, st store.Store, days int) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			days := defaultDays
+			// Read the current retention_days from DB in case it was changed via the UI.
+			if v, ok, err := st.GetSetting(ctx, "general.retention_days"); err == nil && ok {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					days = n
+				}
+			}
 			n, err := st.DeleteOldEvents(ctx, days)
 			if err != nil {
 				slog.Error("retention cleanup", "err", err)

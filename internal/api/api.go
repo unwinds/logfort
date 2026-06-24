@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
@@ -24,7 +25,7 @@ import (
 type Server struct {
 	cfg       *config.Config
 	envCfg    config.Config // notify fields as loaded from env vars (pre-DB-overlay); gates UI writes
-	cfgMu     sync.RWMutex // protects runtime-mutable notify fields of cfg
+	cfgMu     sync.RWMutex // protects runtime-mutable notify/autoban/retention fields of cfg
 	store     store.Store
 	mux       *http.ServeMux
 	handler   http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
@@ -38,6 +39,8 @@ type Server struct {
 	notifyMu  sync.RWMutex
 	notifyFn  func(*parse.Event)
 	notifyDisp *notify.Dispatcher // tracked for Stop() on replacement
+	geoIPEnabled    bool
+	autoBanCooldown sync.Map // IP string → time.Time; prevents duplicate bans within window
 }
 
 // New creates and configures the HTTP server.
@@ -66,6 +69,9 @@ func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
 	s.responder = r
 	s.allowlist = al
 }
+
+// SetGeoIPEnabled records whether a GeoIP database was successfully loaded.
+func (s *Server) SetGeoIPEnabled(v bool) { s.geoIPEnabled = v }
 
 // SetEnvNotifyConfig records which notify fields were set by env vars.
 // Fields non-empty in c will not be overridden at runtime by POST /api/settings.
@@ -190,6 +196,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/unban", s.handleUnbanPost)
 
 	// Settings endpoints.
+	s.mux.HandleFunc("GET /api/system", s.handleGetSystem)
 	s.mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("POST /api/settings", s.handlePostSettings)
 	s.mux.HandleFunc("POST /api/notify/test", s.handleNotifyTest)
@@ -446,30 +453,51 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 
 // --- settings handlers ---
 
-func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	s.cfgMu.RLock()
-	token := s.cfg.NotifyTelegramToken
-	chat := s.cfg.NotifyTelegramChat
-	discord := s.cfg.NotifyDiscordURL
-	webhook := s.cfg.NotifyWebhookURL
-	rules := strings.Join(s.cfg.NotifyRules, ",")
-	s.cfgMu.RUnlock()
+func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"telegram_token":   token,
-		"telegram_chat_id": chat,
-		"discord_url":      discord,
-		"webhook_url":      webhook,
-		"rules":            rules,
+		"backend":           s.cfg.Backend,
+		"log_paths":         s.cfg.LogPaths,
+		"fail2ban_log":      s.cfg.Fail2BanLog,
+		"journald_unit":     s.cfg.JournaldUnit,
+		"geoip_enabled":     s.geoIPEnabled,
+		"responder_enabled": s.cfg.ResponderEnabled,
+		"responder_backend": s.responder.Name(),
+		"fail2ban_jail":     s.cfg.Fail2BanJail,
+		"auth_enabled":      s.cfg.AuthEnabled,
+		"listen":            s.cfg.Listen,
 	})
 }
 
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	s.cfgMu.RLock()
+	resp := map[string]any{
+		"telegram_token":    s.cfg.NotifyTelegramToken,
+		"telegram_chat_id":  s.cfg.NotifyTelegramChat,
+		"discord_url":       s.cfg.NotifyDiscordURL,
+		"webhook_url":       s.cfg.NotifyWebhookURL,
+		"rules":             strings.Join(s.cfg.NotifyRules, ","),
+		"retention_days":    s.cfg.RetentionDays,
+		"autoban_enabled":   s.cfg.AutoBanEnabled,
+		"autoban_threshold": s.cfg.AutoBanThreshold,
+		"autoban_window":    s.cfg.AutoBanWindow,
+	}
+	s.cfgMu.RUnlock()
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
+	// Pointer fields: nil means "field not present in request → don't change".
 	var req struct {
-		TelegramToken string `json:"telegram_token"`
-		TelegramChat  string `json:"telegram_chat_id"`
-		DiscordURL    string `json:"discord_url"`
-		WebhookURL    string `json:"webhook_url"`
-		Rules         string `json:"rules"`
+		TelegramToken *string `json:"telegram_token"`
+		TelegramChat  *string `json:"telegram_chat_id"`
+		DiscordURL    *string `json:"discord_url"`
+		WebhookURL    *string `json:"webhook_url"`
+		Rules         *string `json:"rules"`
+		// General settings
+		RetentionDays    *int    `json:"retention_days"`
+		AutoBanEnabled   *bool   `json:"autoban_enabled"`
+		AutoBanThreshold *int    `json:"autoban_threshold"`
+		AutoBanWindow    *string `json:"autoban_window"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -482,52 +510,77 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	proposed := *s.cfg
 	s.cfgMu.RUnlock()
 
-	if s.envCfg.NotifyTelegramToken == "" {
-		proposed.NotifyTelegramToken = req.TelegramToken
+	// Notify fields (env vars pin their values; nil request field = skip).
+	if req.TelegramToken != nil && s.envCfg.NotifyTelegramToken == "" {
+		proposed.NotifyTelegramToken = *req.TelegramToken
 	}
-	if s.envCfg.NotifyTelegramChat == "" {
-		proposed.NotifyTelegramChat = req.TelegramChat
+	if req.TelegramChat != nil && s.envCfg.NotifyTelegramChat == "" {
+		proposed.NotifyTelegramChat = *req.TelegramChat
 	}
-	if s.envCfg.NotifyDiscordURL == "" {
-		proposed.NotifyDiscordURL = req.DiscordURL
+	if req.DiscordURL != nil && s.envCfg.NotifyDiscordURL == "" {
+		proposed.NotifyDiscordURL = *req.DiscordURL
 	}
-	if s.envCfg.NotifyWebhookURL == "" {
-		proposed.NotifyWebhookURL = req.WebhookURL
+	if req.WebhookURL != nil && s.envCfg.NotifyWebhookURL == "" {
+		proposed.NotifyWebhookURL = *req.WebhookURL
 	}
-	if len(s.envCfg.NotifyRules) == 0 {
+	if req.Rules != nil && len(s.envCfg.NotifyRules) == 0 {
 		proposed.NotifyRules = nil
-		for _, rule := range strings.Split(req.Rules, ",") {
+		for _, rule := range strings.Split(*req.Rules, ",") {
 			if rule = strings.TrimSpace(rule); rule != "" {
 				proposed.NotifyRules = append(proposed.NotifyRules, rule)
 			}
 		}
 	}
 
-	// Validate by attempting to build the dispatcher before touching the DB.
-	// notify.New returns (nil, err) only on bad rule syntax; (nil, nil) is valid
-	// and means "no notifications configured".
+	// General fields (no env pins; nil = skip).
+	if req.RetentionDays != nil && *req.RetentionDays > 0 {
+		proposed.RetentionDays = *req.RetentionDays
+	}
+	if req.AutoBanEnabled != nil {
+		proposed.AutoBanEnabled = *req.AutoBanEnabled
+	}
+	if req.AutoBanThreshold != nil && *req.AutoBanThreshold > 0 {
+		proposed.AutoBanThreshold = *req.AutoBanThreshold
+	}
+	if req.AutoBanWindow != nil {
+		if _, err := time.ParseDuration(*req.AutoBanWindow); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid autoban_window: "+err.Error())
+			return
+		}
+		proposed.AutoBanWindow = *req.AutoBanWindow
+	}
+
+	// Validate notify config before touching the DB.
 	d, err := notify.New(&proposed, s.store)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid settings: "+err.Error())
 		return
 	}
 
-	// Persist to DB (always save request values, even if env-pinned in-memory,
-	// so they take effect if the env var is later removed).
-	pairs := [][2]string{
-		{"notify.telegram.token", req.TelegramToken},
-		{"notify.telegram.chat_id", req.TelegramChat},
-		{"notify.discord.url", req.DiscordURL},
-		{"notify.webhook.url", req.WebhookURL},
-		{"notify.rules", req.Rules},
-	}
-	for _, p := range pairs {
-		if err := s.store.SetSetting(r.Context(), p[0], p[1]); err != nil {
-			slog.Error("save setting", "key", p[0], "err", err)
+	// Persist to DB — only fields present in the request.
+	persist := func(key, val string) bool {
+		if err := s.store.SetSetting(r.Context(), key, val); err != nil {
+			slog.Error("save setting", "key", key, "err", err)
 			writeError(w, http.StatusInternalServerError, "failed to save settings")
-			return
+			return false
 		}
+		return true
 	}
+	if req.TelegramToken != nil && !persist("notify.telegram.token", *req.TelegramToken) { return }
+	if req.TelegramChat != nil && !persist("notify.telegram.chat_id", *req.TelegramChat) { return }
+	if req.DiscordURL != nil && !persist("notify.discord.url", *req.DiscordURL) { return }
+	if req.WebhookURL != nil && !persist("notify.webhook.url", *req.WebhookURL) { return }
+	if req.Rules != nil && !persist("notify.rules", *req.Rules) { return }
+	if req.RetentionDays != nil && !persist("general.retention_days", strconv.Itoa(proposed.RetentionDays)) { return }
+	if req.AutoBanEnabled != nil {
+		val := "false"
+		if proposed.AutoBanEnabled {
+			val = "true"
+		}
+		if !persist("autoban.enabled", val) { return }
+	}
+	if req.AutoBanThreshold != nil && !persist("autoban.threshold", strconv.Itoa(proposed.AutoBanThreshold)) { return }
+	if req.AutoBanWindow != nil && !persist("autoban.window", proposed.AutoBanWindow) { return }
 
 	// Apply effective config to in-memory state.
 	s.cfgMu.Lock()
@@ -536,10 +589,17 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.NotifyDiscordURL = proposed.NotifyDiscordURL
 	s.cfg.NotifyWebhookURL = proposed.NotifyWebhookURL
 	s.cfg.NotifyRules = proposed.NotifyRules
+	s.cfg.RetentionDays = proposed.RetentionDays
+	s.cfg.AutoBanEnabled = proposed.AutoBanEnabled
+	s.cfg.AutoBanThreshold = proposed.AutoBanThreshold
+	s.cfg.AutoBanWindow = proposed.AutoBanWindow
 	s.cfgMu.Unlock()
 
-	// Swap dispatcher, stopping in-flight goroutines of the previous one.
-	s.swapDispatcher(d)
+	// Notify fields changed — swap dispatcher.
+	if req.TelegramToken != nil || req.TelegramChat != nil ||
+		req.DiscordURL != nil || req.WebhookURL != nil || req.Rules != nil {
+		s.swapDispatcher(d)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
@@ -560,6 +620,86 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		Source:    "logfort-test",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+// AutoBanEvent checks whether ev's source IP has crossed the auto-ban threshold
+// and, if so, bans it via the responder in a background goroutine.
+func (s *Server) AutoBanEvent(ev *parse.Event) {
+	s.cfgMu.RLock()
+	enabled := s.cfg.AutoBanEnabled
+	threshold := s.cfg.AutoBanThreshold
+	window := s.cfg.AutoBanWindow
+	s.cfgMu.RUnlock()
+
+	if !enabled || !s.cfg.ResponderEnabled {
+		return
+	}
+	// Only react to auth-failure events, not to bans/unbans/accepted logins.
+	switch ev.EventType {
+	case "ban", "unban", "accepted":
+		return
+	}
+	if ev.IP == "" || responder.IsPrivate(ev.IP) {
+		return
+	}
+	if s.allowlist != nil && s.allowlist.Contains(ev.IP) {
+		return
+	}
+
+	dur, err := time.ParseDuration(window)
+	if err != nil || threshold <= 0 {
+		return
+	}
+
+	now := time.Now()
+	// Per-IP cooldown: don't trigger again until the window elapses after last attempt.
+	if last, ok := s.autoBanCooldown.Load(ev.IP); ok {
+		if now.Sub(last.(time.Time)) < dur {
+			return
+		}
+	}
+
+	go s.autoBanBackground(ev.IP, threshold, dur, now)
+}
+
+func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, now time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	count, err := s.store.CountIPEvents(ctx, ip, now.Add(-dur))
+	if err != nil {
+		slog.Warn("auto-ban count", "ip", ip, "err", err)
+		return
+	}
+	if count < int64(threshold) {
+		return
+	}
+
+	// Record cooldown before banning to prevent concurrent duplicate bans.
+	s.autoBanCooldown.Store(ip, now)
+
+	if err := s.store.BanIP(ctx, ip, s.responder.Name(), "auto-ban"); err != nil {
+		slog.Debug("auto-ban store skip", "ip", ip, "err", err)
+		return
+	}
+	if err := s.responder.Ban(ctx, ip); err != nil {
+		if rbErr := s.store.UnbanIP(ctx, ip); rbErr != nil {
+			slog.Error("auto-ban rollback", "ip", ip, "err", rbErr)
+		}
+		slog.Error("auto-ban responder", "ip", ip, "err", err)
+		return
+	}
+
+	slog.Info("auto-ban", "ip", ip, "count", count, "window", dur, "backend", s.responder.Name())
+
+	banEv := &parse.Event{
+		TS:        time.Now().UTC(),
+		IP:        ip,
+		EventType: "ban",
+		Source:    "auto-ban",
+	}
+	s.PublishEvent(banEv)
+	s.NotifyEvent(banEv)
 }
 
 // --- helpers ---
