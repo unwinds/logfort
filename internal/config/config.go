@@ -178,7 +178,9 @@ func (c *Config) OverlaySettings(s map[string]string) {
 	}
 
 	// Auto-ban — purely UI-controlled, always overlay from DB.
-	c.AutoBanEnabled = s["autoban.enabled"] == "true"
+	if v := s["autoban.enabled"]; v != "" {
+		c.AutoBanEnabled = v == "true"
+	}
 	if v := s["autoban.threshold"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.AutoBanThreshold = n

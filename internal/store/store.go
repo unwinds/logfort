@@ -31,6 +31,8 @@ type Store interface {
 	GetSetting(ctx context.Context, key string) (value string, found bool, err error)
 	// SetSetting upserts a key-value pair in the settings table.
 	SetSetting(ctx context.Context, key, value string) error
+	// SetSettings atomically persists multiple key-value pairs in a single transaction.
+	SetSettings(ctx context.Context, pairs map[string]string) error
 	// GetAllSettings returns all key-value pairs from the settings table.
 	GetAllSettings(ctx context.Context) (map[string]string, error)
 	Close() error

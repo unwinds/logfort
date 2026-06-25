@@ -501,6 +501,23 @@ func (s *SQLiteStore) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
+// SetSettings atomically persists multiple key-value pairs in a single transaction.
+func (s *SQLiteStore) SetSettings(ctx context.Context, pairs map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin settings tx: %w", err)
+	}
+	for k, v := range pairs {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+			k, v); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("set setting %q: %w", k, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // GetAllSettings returns all key-value pairs.
 func (s *SQLiteStore) GetAllSettings(ctx context.Context) (map[string]string, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT key, value FROM settings")

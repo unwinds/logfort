@@ -40,20 +40,27 @@ type Server struct {
 	notifyFn  func(*parse.Event)
 	notifyDisp *notify.Dispatcher // tracked for Stop() on replacement
 	geoIPEnabled    bool
-	autoBanCooldown sync.Map // IP string → time.Time; prevents duplicate bans within window
+	autoBanCooldown sync.Map    // IP string → time.Time; prevents duplicate bans within window
+	autoBanSem      chan struct{} // limits concurrent auto-ban background goroutines
+	shutCtx         context.Context
+	shutCancel      context.CancelFunc
 }
 
 // New creates and configures the HTTP server.
 func New(cfg *config.Config, st store.Store, version string) *Server {
+	shutCtx, shutCancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:       cfg,
-		store:     st,
-		version:   version,
-		startTS:   time.Now(),
-		mux:       http.NewServeMux(),
-		hub:       newHub(),
-		responder: responder.NoopResponder{},
-		banLim:    newRateLimiter(10, 20), // 10 req/s burst 20; unban is never throttled
+		cfg:        cfg,
+		store:      st,
+		version:    version,
+		startTS:    time.Now(),
+		mux:        http.NewServeMux(),
+		hub:        newHub(),
+		responder:  responder.NoopResponder{},
+		banLim:     newRateLimiter(10, 20), // 10 req/s burst 20; unban is never throttled
+		autoBanSem: make(chan struct{}, 100),
+		shutCtx:    shutCtx,
+		shutCancel: shutCancel,
 	}
 	s.routes()
 	if cfg.AuthEnabled {
@@ -150,8 +157,11 @@ func (s *Server) PublishEvent(ev *parse.Event) {
 	s.hub.publish(msg)
 }
 
-// Close shuts down the SSE hub. Call after the HTTP server has stopped.
-func (s *Server) Close() { s.hub.close() }
+// Close signals shutdown and closes the SSE hub. Call after the HTTP server has stopped.
+func (s *Server) Close() {
+	s.shutCancel()
+	s.hub.close()
+}
 
 // SetCounterFunc wires the pipeline's parsed/unparsed counters into /api/health.
 func (s *Server) SetCounterFunc(fn func() (int64, int64)) {
@@ -411,12 +421,14 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("manual ban", "ip", req.IP, "reason", req.Reason, "remote", remoteIP, "backend", s.responder.Name())
-	s.NotifyEvent(&parse.Event{
+	banEv := &parse.Event{
 		TS:        time.Now().UTC(),
 		IP:        req.IP,
 		EventType: "ban",
 		Source:    "manual",
-	})
+	}
+	s.PublishEvent(banEv)
+	s.NotifyEvent(banEv)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "banned", "ip": req.IP})
 }
 
@@ -562,30 +574,46 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist to DB — only fields present in the request.
-	persist := func(key, val string) bool {
-		if err := s.store.SetSetting(r.Context(), key, val); err != nil {
-			slog.Error("save setting", "key", key, "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to save settings")
-			return false
-		}
-		return true
+	// Collect all changed fields and persist atomically in a single transaction.
+	toSave := make(map[string]string)
+	if req.TelegramToken != nil {
+		toSave["notify.telegram.token"] = *req.TelegramToken
 	}
-	if req.TelegramToken != nil && !persist("notify.telegram.token", *req.TelegramToken) { return }
-	if req.TelegramChat != nil && !persist("notify.telegram.chat_id", *req.TelegramChat) { return }
-	if req.DiscordURL != nil && !persist("notify.discord.url", *req.DiscordURL) { return }
-	if req.WebhookURL != nil && !persist("notify.webhook.url", *req.WebhookURL) { return }
-	if req.Rules != nil && !persist("notify.rules", *req.Rules) { return }
-	if req.RetentionDays != nil && !persist("general.retention_days", strconv.Itoa(proposed.RetentionDays)) { return }
+	if req.TelegramChat != nil {
+		toSave["notify.telegram.chat_id"] = *req.TelegramChat
+	}
+	if req.DiscordURL != nil {
+		toSave["notify.discord.url"] = *req.DiscordURL
+	}
+	if req.WebhookURL != nil {
+		toSave["notify.webhook.url"] = *req.WebhookURL
+	}
+	if req.Rules != nil {
+		toSave["notify.rules"] = *req.Rules
+	}
+	if req.RetentionDays != nil {
+		toSave["general.retention_days"] = strconv.Itoa(proposed.RetentionDays)
+	}
 	if req.AutoBanEnabled != nil {
-		val := "false"
 		if proposed.AutoBanEnabled {
-			val = "true"
+			toSave["autoban.enabled"] = "true"
+		} else {
+			toSave["autoban.enabled"] = "false"
 		}
-		if !persist("autoban.enabled", val) { return }
 	}
-	if req.AutoBanThreshold != nil && !persist("autoban.threshold", strconv.Itoa(proposed.AutoBanThreshold)) { return }
-	if req.AutoBanWindow != nil && !persist("autoban.window", proposed.AutoBanWindow) { return }
+	if req.AutoBanThreshold != nil {
+		toSave["autoban.threshold"] = strconv.Itoa(proposed.AutoBanThreshold)
+	}
+	if req.AutoBanWindow != nil {
+		toSave["autoban.window"] = proposed.AutoBanWindow
+	}
+	if len(toSave) > 0 {
+		if err := s.store.SetSettings(r.Context(), toSave); err != nil {
+			slog.Error("save settings", "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to save settings")
+			return
+		}
+	}
 
 	// Apply effective config to in-memory state.
 	s.cfgMu.Lock()
@@ -600,10 +628,12 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.AutoBanWindow = proposed.AutoBanWindow
 	s.cfgMu.Unlock()
 
-	// Notify fields changed — swap dispatcher.
+	// Swap dispatcher only if notify fields were included in this request.
 	if req.TelegramToken != nil || req.TelegramChat != nil ||
 		req.DiscordURL != nil || req.WebhookURL != nil || req.Rules != nil {
 		s.swapDispatcher(d)
+	} else {
+		d.Stop() // nil-safe; discard the unused validation dispatcher
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
@@ -632,11 +662,12 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) AutoBanEvent(ev *parse.Event) {
 	s.cfgMu.RLock()
 	enabled := s.cfg.AutoBanEnabled
+	responderEnabled := s.cfg.ResponderEnabled
 	threshold := s.cfg.AutoBanThreshold
 	window := s.cfg.AutoBanWindow
 	s.cfgMu.RUnlock()
 
-	if !enabled || !s.cfg.ResponderEnabled {
+	if !enabled || !responderEnabled {
 		return
 	}
 	// Only react to auth-failure events, not to bans/unbans/accepted logins.
@@ -644,10 +675,13 @@ func (s *Server) AutoBanEvent(ev *parse.Event) {
 	case "ban", "unban", "accepted":
 		return
 	}
-	if ev.IP == "" || responder.IsPrivate(ev.IP) {
+
+	// Normalize to plain IPv4 so ::ffff:1.2.3.4 and 1.2.3.4 are treated identically.
+	ip := normalizeIP(ev.IP)
+	if ip == "" || responder.IsPrivate(ip) {
 		return
 	}
-	if s.allowlist != nil && s.allowlist.Contains(ev.IP) {
+	if s.allowlist != nil && s.allowlist.Contains(ip) {
 		return
 	}
 
@@ -657,34 +691,52 @@ func (s *Server) AutoBanEvent(ev *parse.Event) {
 	}
 
 	now := time.Now()
-	// Per-IP cooldown: don't trigger again until the window elapses after last attempt.
-	if last, ok := s.autoBanCooldown.Load(ev.IP); ok {
-		if now.Sub(last.(time.Time)) < dur {
+	// Atomically claim the cooldown slot. LoadOrStore ensures only one goroutine
+	// proceeds when no prior entry exists; if an entry exists and is not expired,
+	// skip. On expiry, overwrite the stale entry and proceed.
+	if prev, loaded := s.autoBanCooldown.LoadOrStore(ip, now); loaded {
+		if now.Sub(prev.(time.Time)) < dur {
 			return
 		}
+		s.autoBanCooldown.Store(ip, now)
 	}
 
-	go s.autoBanBackground(ev.IP, threshold, dur, now)
+	// Semaphore: cap concurrent background goroutines to bound resource use during bursts.
+	select {
+	case s.autoBanSem <- struct{}{}:
+	default:
+		// At capacity; clear the cooldown we just set so this IP can retry on the next event.
+		s.autoBanCooldown.Delete(ip)
+		return
+	}
+	go func() {
+		defer func() { <-s.autoBanSem }()
+		s.autoBanBackground(ip, threshold, dur, now)
+	}()
 }
 
 func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, now time.Time) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Respect server shutdown; cap individual ban operations at 30s.
+	ctx, cancel := context.WithTimeout(s.shutCtx, 30*time.Second)
 	defer cancel()
 
 	count, err := s.store.CountIPEvents(ctx, ip, now.Add(-dur))
 	if err != nil {
 		slog.Warn("auto-ban count", "ip", ip, "err", err)
+		s.autoBanCooldown.Delete(ip) // allow retry after transient DB error
 		return
 	}
 	if count < int64(threshold) {
+		// Threshold not reached; clear cooldown so the next event rechecks.
+		s.autoBanCooldown.Delete(ip)
 		return
 	}
 
-	// Record cooldown before banning to prevent concurrent duplicate bans.
-	s.autoBanCooldown.Store(ip, now)
-
 	if err := s.store.BanIP(ctx, ip, s.responder.Name(), "auto-ban"); err != nil {
-		slog.Debug("auto-ban store skip", "ip", ip, "err", err)
+		// BanIP uses INSERT WHERE NOT EXISTS: nil error means 0 rows (already banned).
+		// Any non-nil error here is a real DB failure.
+		slog.Error("auto-ban store", "ip", ip, "err", err)
+		s.autoBanCooldown.Delete(ip) // allow retry
 		return
 	}
 	if err := s.responder.Ban(ctx, ip); err != nil {
@@ -692,6 +744,7 @@ func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, 
 			slog.Error("auto-ban rollback", "ip", ip, "err", rbErr)
 		}
 		slog.Error("auto-ban responder", "ip", ip, "err", err)
+		s.autoBanCooldown.Delete(ip) // allow retry after transient firewall error
 		return
 	}
 
