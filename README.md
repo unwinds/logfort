@@ -24,7 +24,8 @@ LogFort watches your auth logs and shows you a live browser dashboard: who is at
 - 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, `fail2ban.log`, systemd journal
 - 🔒 **HTTP Basic Auth** — optional, protects all routes except `/api/health`
 - 🛡️ **Privacy-first** — zero outbound requests at runtime; GeoIP is a local `.mmdb` file
-- ⚙️ **Runtime settings UI** — configure notifications in the browser, no restart needed
+- 🤖 **Auto-ban** — automatically ban IPs that exceed a configurable threshold (events per time window); toggle and tune via the Settings UI without restart
+- ⚙️ **Runtime settings UI** — configure notifications, auto-ban, and data retention in the browser, no restart needed
 
 ---
 

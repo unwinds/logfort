@@ -1155,6 +1155,11 @@ async function loadMap() {
        .bindPopup(`<b>${esc(p.ip)}</b><br>${p.country?esc(p.country)+'<br>':''}<span style="color:var(--danger);font-weight:600">${fmt(p.count)}</span> attacks`)
        .addTo(markersLayer);
     });
+    if (d.home_lat != null && d.home_lon != null) {
+      L.circleMarker([d.home_lat, d.home_lon], {
+        radius:9, fillColor:'#a3be8c', fillOpacity:.9, color:'#6a8a5a', weight:2,
+      }).bindPopup('<b>Home</b>').addTo(markersLayer);
+    }
   } catch(e) { console.error('map',e); }
 }
 

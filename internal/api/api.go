@@ -311,7 +311,12 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 	if points == nil {
 		points = []store.MapPoint{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"points": points})
+	resp := map[string]any{"points": points}
+	if s.cfg.HomeLat != nil && s.cfg.HomeLon != nil {
+		resp["home_lat"] = *s.cfg.HomeLat
+		resp["home_lon"] = *s.cfg.HomeLon
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
