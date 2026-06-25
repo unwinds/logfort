@@ -66,9 +66,9 @@ install_pkg() {
 # ── docker ────────────────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   warn "Docker is not installed."
-  ask "Install Docker automatically? [y/N]"
+  ask "Install Docker automatically? [Y/n]"
   read_tty ans
-  if [[ "$ans" =~ ^[Yy]$ ]]; then
+  if [[ ! "$ans" =~ ^[Nn]$ ]]; then
     info "installing Docker via get.docker.com…"
     curl -fsSL https://get.docker.com | sh
     systemctl enable --now docker
@@ -80,9 +80,9 @@ fi
 # ── fail2ban (optional) ───────────────────────────────────────────────────────
 FAIL2BAN_LOG=""
 if ! command -v fail2ban-client &>/dev/null; then
-  ask "fail2ban is not installed. Install it now? [y/N]"
+  ask "fail2ban is not installed. Install it now? [Y/n]"
   read_tty ans
-  if [[ "$ans" =~ ^[Yy]$ ]] && [[ -n "$PKG_MGR" ]]; then
+  if [[ ! "$ans" =~ ^[Nn]$ ]] && [[ -n "$PKG_MGR" ]]; then
     install_pkg fail2ban
     systemctl enable --now fail2ban || true
   fi
