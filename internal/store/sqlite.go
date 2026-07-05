@@ -6,6 +6,8 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +28,14 @@ type SQLiteStore struct {
 
 // New opens (or creates) the SQLite database at dsn and applies migrations.
 func New(dsn string) (*SQLiteStore, error) {
+	// Ensure the parent directory exists for plain file paths; a missing
+	// directory otherwise surfaces as an opaque "unable to open database file"
+	// error on the first query.
+	if dsn != ":memory:" && !strings.HasPrefix(dsn, "file:") {
+		if dir := filepath.Dir(dsn); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0o750)
+		}
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", dsn, err)
@@ -51,8 +61,8 @@ func (s *SQLiteStore) applyPragmas() error {
 		"PRAGMA synchronous=NORMAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
-		"PRAGMA cache_size=-65536",  // 64 MB page cache
-		"PRAGMA temp_store=MEMORY",  // sorts/groups in RAM
+		"PRAGMA cache_size=-65536", // 64 MB page cache
+		"PRAGMA temp_store=MEMORY", // sorts/groups in RAM
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("pragma %q: %w", stmt, err)
@@ -209,7 +219,7 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 	defer rows.Close()
 	_ = countArgs
 
-	var events []EventRow
+	events := []EventRow{}
 	for rows.Next() {
 		var e EventRow
 		var userValid sql.NullInt64
@@ -259,6 +269,7 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 
 	st := &Stats{
 		Window:       window,
+		BucketSecs:   bucketSecs,
 		TopIPs:       []TopIP{},
 		TopCountries: []TopCountry{},
 		TopUsernames: []TopUsername{},
@@ -430,7 +441,7 @@ func (s *SQLiteStore) GetMapPoints(ctx context.Context, window string) ([]MapPoi
 	}
 	defer rows.Close()
 
-	var points []MapPoint
+	points := []MapPoint{}
 	for rows.Next() {
 		var p MapPoint
 		var country sql.NullString
@@ -443,11 +454,16 @@ func (s *SQLiteStore) GetMapPoints(ctx context.Context, window string) ([]MapPoi
 	return points, rows.Err()
 }
 
-// DeleteOldEvents removes events older than retentionDays.
+// DeleteOldEvents removes events older than retentionDays. Inactive ban
+// history rows older than the same cutoff are pruned in the same pass so the
+// bans table does not grow without bound. Active bans are never touched.
 func (s *SQLiteStore) DeleteOldEvents(ctx context.Context, retentionDays int) (int64, error) {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays).Unix()
 	res, err := s.db.ExecContext(ctx, "DELETE FROM events WHERE ts < ?", cutoff)
 	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM bans WHERE active=0 AND banned_at < ?", cutoff); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
@@ -473,11 +489,13 @@ func (s *SQLiteStore) UnbanIP(ctx context.Context, ip string) error {
 	return err
 }
 
-// CountIPEvents returns the number of non-ban/unban events from ip since the given time.
+// CountIPEvents returns the number of suspicious (failed) events from ip since
+// the given time. Accepted logins are excluded so that legitimate automation
+// (cron over SSH, deploy keys) never counts toward auto-ban or alert thresholds.
 func (s *SQLiteStore) CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type NOT IN ('ban','unban')",
+		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type NOT IN ('ban','unban','accepted')",
 		ip, since.Unix(),
 	).Scan(&count)
 	return count, err
@@ -574,15 +592,27 @@ func buildEventWhere(q EventQuery) (string, []any) {
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
+// IsValidWindow reports whether window is an accepted stats/map window value.
+// Handlers use it to distinguish a client error (bad window → 400) from an
+// internal store failure (→ 500).
+func IsValidWindow(window string) bool {
+	switch window {
+	case "1h", "6h", "24h", "", "7d", "30d", "all":
+		return true
+	}
+	return false
+}
+
 // windowToSince converts a window string to a Unix timestamp (0 = no filter)
-// and the bucket size in seconds for timeline grouping.
+// and the bucket size in seconds for timeline grouping. Bucket sizes are
+// chosen so every window renders a meaningful number of bars (~12–30).
 func windowToSince(window string) (since int64, bucketSecs int64, err error) {
 	now := time.Now()
 	switch window {
 	case "1h":
-		return now.Add(-time.Hour).Unix(), 3600, nil
+		return now.Add(-time.Hour).Unix(), 300, nil
 	case "6h":
-		return now.Add(-6 * time.Hour).Unix(), 3600, nil
+		return now.Add(-6 * time.Hour).Unix(), 1800, nil
 	case "24h", "":
 		return now.Add(-24 * time.Hour).Unix(), 3600, nil
 	case "7d":

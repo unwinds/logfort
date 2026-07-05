@@ -1,13 +1,16 @@
 package api
 
+import "sync"
+
 // Hub broadcasts Server-Sent Events to all connected subscribers.
 // All methods are safe for concurrent use.
 type Hub struct {
-	sub   chan chan []byte
-	unsub chan chan []byte
-	pub   chan []byte
-	quit  chan struct{}
-	done  chan struct{}
+	sub       chan chan []byte
+	unsub     chan chan []byte
+	pub       chan []byte
+	quit      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newHub() *Hub {
@@ -70,7 +73,10 @@ func (h *Hub) publish(msg []byte) {
 	}
 }
 
+// close shuts the hub down and disconnects all subscribers. Idempotent:
+// it is called from both Server.Shutdown (to unblock SSE handlers before
+// http.Server.Shutdown) and Server.Close.
 func (h *Hub) close() {
-	close(h.quit)
+	h.closeOnce.Do(func() { close(h.quit) })
 	<-h.done
 }

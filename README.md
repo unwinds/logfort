@@ -20,12 +20,13 @@ LogFort watches your auth logs and shows you a live browser dashboard: who is at
 - 📊 **Stats & timeline** — top attacker IPs, usernames, countries; hourly/daily bar chart
 - 🚫 **One-click banning** — active block via nftables or fail2ban, with full ban/unban history
 - 🔔 **Notifications** — Telegram, Discord, or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`
-- 📋 **Events with pagination** — browse full attack history, 50/100/200 rows per page
+- 📋 **Events browser** — pagination, type/IP filters, one-click CSV export
 - 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, `fail2ban.log`, systemd journal
 - 🔒 **HTTP Basic Auth** — optional, protects all routes except `/api/health`
 - 🛡️ **Privacy-first** — zero outbound requests at runtime; GeoIP is a local `.mmdb` file
 - 🤖 **Auto-ban** — automatically ban IPs that exceed a configurable threshold (events per time window); toggle and tune via the Settings UI without restart
 - ⚙️ **Runtime settings UI** — configure notifications, auto-ban, and data retention in the browser, no restart needed
+- 📈 **Prometheus metrics** — `/metrics` endpoint with parsed/unparsed counters and active-ban gauge
 
 ---
 
@@ -146,6 +147,22 @@ All settings are environment variables. Notification settings can also be change
 | `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `threshold:N/dur` |
 
 Env vars always override values saved via the UI.
+
+---
+
+## HTTP API
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/health` | Status, version, uptime, parse counters (never requires auth) |
+| `GET /api/stats?window=24h` | Aggregates + timeline (`1h\|6h\|24h\|7d\|30d\|all`) |
+| `GET /api/events` | Filterable event list (`type`, `ip`, `country`, `since`, `until`, `limit`, `offset`) |
+| `GET /api/events.csv` | Same filters, CSV download (up to 10 000 rows) |
+| `GET /api/bans?active=true` | Ban history |
+| `GET /api/map?window=24h` | Geo-aggregated attack points |
+| `GET /api/stream` | Live events via Server-Sent Events |
+| `GET /metrics` | Prometheus text format (respects basic auth) |
+| `POST /api/ban` / `POST /api/unban` | Manual banning (requires responder) |
 
 ---
 

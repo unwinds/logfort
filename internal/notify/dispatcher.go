@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -68,6 +69,29 @@ func (d *Dispatcher) Notify(ev *parse.Event) {
 		defer cancel()
 		d.dispatch(ctx, ev)
 	}()
+}
+
+// SendTest delivers a fixed test message directly to every configured
+// notifier, bypassing rule evaluation, and returns the first delivery error.
+// Rules are intentionally skipped: the point of a test is to verify the
+// channel works even when no rule would match a synthetic event.
+func (d *Dispatcher) SendTest(ctx context.Context) error {
+	if d == nil {
+		return errors.New("no notifiers configured")
+	}
+	msg := Message{
+		Title:     "LogFort: Test Notification",
+		Body:      "If you can read this, the notification channel works.",
+		EventType: "test",
+		TS:        time.Now().Unix(),
+	}
+	var firstErr error
+	for _, n := range d.notifiers {
+		if err := n.Send(ctx, msg); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", n.Name(), err)
+		}
+	}
+	return firstErr
 }
 
 // dispatch is the synchronous core used by Notify and by tests.

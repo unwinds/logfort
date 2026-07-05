@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -13,34 +15,34 @@ import (
 	"sync"
 	"time"
 
-	webui "github.com/unwinds/logfort/web"
 	"github.com/unwinds/logfort/internal/config"
 	"github.com/unwinds/logfort/internal/notify"
 	"github.com/unwinds/logfort/internal/parse"
 	"github.com/unwinds/logfort/internal/responder"
 	"github.com/unwinds/logfort/internal/store"
+	webui "github.com/unwinds/logfort/web"
 )
 
 // Server holds API dependencies and implements http.Handler.
 type Server struct {
-	cfg       *config.Config
-	envCfg    config.Config // notify fields as loaded from env vars (pre-DB-overlay); gates UI writes
-	cfgMu     sync.RWMutex // protects runtime-mutable notify/autoban/retention fields of cfg
-	store     store.Store
-	mux       *http.ServeMux
-	handler   http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
-	hub       *Hub
-	version   string
-	startTS   time.Time
-	parsedFn  func() (int64, int64)
-	responder responder.Responder
-	allowlist *responder.Allowlist
-	banLim    *rateLimiter // limits ban requests only; unban is not throttled
-	notifyMu  sync.RWMutex
-	notifyFn  func(*parse.Event)
-	notifyDisp *notify.Dispatcher // tracked for Stop() on replacement
+	cfg             *config.Config
+	envCfg          config.Config // notify fields as loaded from env vars (pre-DB-overlay); gates UI writes
+	cfgMu           sync.RWMutex  // protects runtime-mutable notify/autoban/retention fields of cfg
+	store           store.Store
+	mux             *http.ServeMux
+	handler         http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
+	hub             *Hub
+	version         string
+	startTS         time.Time
+	parsedFn        func() (int64, int64)
+	responder       responder.Responder
+	allowlist       *responder.Allowlist
+	banLim          *rateLimiter // limits ban requests only; unban is not throttled
+	notifyMu        sync.RWMutex
+	notifyFn        func(*parse.Event)
+	notifyDisp      *notify.Dispatcher // tracked for Stop() on replacement
 	geoIPEnabled    bool
-	autoBanCooldown sync.Map    // IP string → time.Time; prevents duplicate bans within window
+	autoBanCooldown sync.Map      // IP string → time.Time; prevents duplicate bans within window
 	autoBanSem      chan struct{} // limits concurrent auto-ban background goroutines
 	shutCtx         context.Context
 	shutCancel      context.CancelFunc
@@ -68,6 +70,7 @@ func New(cfg *config.Config, st store.Store, version string) *Server {
 	} else {
 		s.handler = s.mux
 	}
+	s.handler = securityHeaders(s.handler)
 	return s
 }
 
@@ -157,6 +160,13 @@ func (s *Server) PublishEvent(ev *parse.Event) {
 	s.hub.publish(msg)
 }
 
+// Shutdown disconnects all SSE subscribers so that http.Server.Shutdown can
+// drain remaining requests instead of waiting out its timeout on streams that
+// would otherwise never end. Call it BEFORE http.Server.Shutdown.
+func (s *Server) Shutdown() {
+	s.hub.close()
+}
+
 // Close signals shutdown and closes the SSE hub. Call after the HTTP server has stopped.
 func (s *Server) Close() {
 	s.shutCancel()
@@ -172,6 +182,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
+// securityHeaders adds baseline hardening headers to every response.
+func securityHeaders(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hdr := w.Header()
+		hdr.Set("X-Content-Type-Options", "nosniff")
+		hdr.Set("X-Frame-Options", "DENY")
+		hdr.Set("Referrer-Policy", "no-referrer")
+		h.ServeHTTP(w, r)
+	})
+}
+
+// authFailureDelay slows down credential brute-forcing without keeping
+// per-IP state (which an attacker could grow without bound).
+const authFailureDelay = 300 * time.Millisecond
+
 // basicAuth wraps h with HTTP Basic authentication, exempting /api/health
 // so the Docker HEALTHCHECK works without credentials in the image.
 func (s *Server) basicAuth(h http.Handler) http.Handler {
@@ -184,6 +209,14 @@ func (s *Server) basicAuth(h http.Handler) http.Handler {
 		userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.AuthUser)) == 1
 		passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.AuthPass)) == 1
 		if !ok || !userMatch || !passMatch {
+			if ok {
+				// Only delay actual credential attempts, not the initial
+				// challenge round-trip every browser session starts with.
+				select {
+				case <-time.After(authFailureDelay):
+				case <-r.Context().Done():
+				}
+			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="logfort"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -197,9 +230,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
+	s.mux.HandleFunc("GET /api/events.csv", s.handleEventsCSV)
 	s.mux.HandleFunc("GET /api/bans", s.handleBans)
 	s.mux.HandleFunc("GET /api/map", s.handleMap)
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	// Write endpoints (require responder enabled).
 	s.mux.HandleFunc("POST /api/ban", s.handleBanPost)
@@ -250,24 +285,37 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if window == "" {
 		window = "24h"
 	}
+	if !store.IsValidWindow(window) {
+		writeError(w, http.StatusBadRequest, "invalid window; use 1h|6h|24h|7d|30d|all")
+		return
+	}
 	st, err := s.store.GetStats(r.Context(), window)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		slog.Error("get stats", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
 }
 
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+// eventQueryFromRequest builds a store.EventQuery from shared query params
+// (limit, offset, type, ip, country, since, until) capped at maxLimit.
+func eventQueryFromRequest(r *http.Request, defLimit, maxLimit int) store.EventQuery {
 	q := store.EventQuery{
-		Limit:     parseIntQuery(r, "limit", 100),
+		Limit:     parseIntQuery(r, "limit", defLimit),
 		Offset:    parseIntQuery(r, "offset", 0),
 		EventType: r.URL.Query().Get("type"),
 		IP:        r.URL.Query().Get("ip"),
 		Country:   r.URL.Query().Get("country"),
 	}
-	if q.Limit > 1000 {
-		q.Limit = 1000
+	if q.Limit < 1 {
+		q.Limit = defLimit
+	}
+	if q.Limit > maxLimit {
+		q.Limit = maxLimit
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
 	}
 	if raw := r.URL.Query().Get("since"); raw != "" {
 		if ts, err := strconv.ParseInt(raw, 10, 64); err == nil {
@@ -281,6 +329,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			q.Until = &t
 		}
 	}
+	return q
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	q := eventQueryFromRequest(r, 100, 1000)
 
 	events, total, err := s.store.ListEvents(r.Context(), q)
 	if err != nil {
@@ -294,6 +347,68 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		"limit":  q.Limit,
 		"offset": q.Offset,
 	})
+}
+
+// handleEventsCSV streams events matching the same filters as /api/events as
+// a CSV download (up to 10 000 rows per request).
+func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
+	q := eventQueryFromRequest(r, 10000, 10000)
+
+	events, _, err := s.store.ListEvents(r.Context(), q)
+	if err != nil {
+		slog.Error("export events", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="logfort-events.csv"`)
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"ts", "ip", "event_type", "username", "user_valid", "auth_method", "port", "source", "country", "city", "lat", "lon"})
+	for _, e := range events {
+		userValid := ""
+		if e.UserValid != nil {
+			userValid = strconv.FormatBool(*e.UserValid)
+		}
+		port := ""
+		if e.Port != 0 {
+			port = strconv.Itoa(e.Port)
+		}
+		lat, lon := "", ""
+		if e.Lat != nil {
+			lat = strconv.FormatFloat(*e.Lat, 'f', 4, 64)
+		}
+		if e.Lon != nil {
+			lon = strconv.FormatFloat(*e.Lon, 'f', 4, 64)
+		}
+		_ = cw.Write([]string{
+			time.Unix(e.TS, 0).UTC().Format(time.RFC3339),
+			e.IP, e.EventType, e.Username, userValid, e.AuthMethod,
+			port, e.Source, e.Country, e.City, lat, lon,
+		})
+	}
+	cw.Flush()
+}
+
+// handleMetrics exposes counters in the Prometheus text exposition format.
+// Hand-rolled to avoid pulling in the client library for five metrics.
+// Subject to basic auth like the rest of the API (Prometheus supports
+// basic_auth in scrape_configs).
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	var parsed, unparsed int64
+	if s.parsedFn != nil {
+		parsed, unparsed = s.parsedFn()
+	}
+	activeBans := int64(0)
+	if bans, err := s.store.ListBans(r.Context(), true); err == nil {
+		activeBans = int64(len(bans))
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	fmt.Fprintf(w, "# HELP logfort_build_info Build information.\n# TYPE logfort_build_info gauge\nlogfort_build_info{version=%q} 1\n", s.version)
+	fmt.Fprintf(w, "# HELP logfort_uptime_seconds Seconds since the process started.\n# TYPE logfort_uptime_seconds gauge\nlogfort_uptime_seconds %d\n", int64(time.Since(s.startTS).Seconds()))
+	fmt.Fprintf(w, "# HELP logfort_lines_parsed_total Log lines parsed into events.\n# TYPE logfort_lines_parsed_total counter\nlogfort_lines_parsed_total %d\n", parsed)
+	fmt.Fprintf(w, "# HELP logfort_lines_unparsed_total Log lines that matched no pattern.\n# TYPE logfort_lines_unparsed_total counter\nlogfort_lines_unparsed_total %d\n", unparsed)
+	fmt.Fprintf(w, "# HELP logfort_bans_active Currently active bans.\n# TYPE logfort_bans_active gauge\nlogfort_bans_active %d\n", activeBans)
 }
 
 func (s *Server) handleBans(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +426,10 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 	window := r.URL.Query().Get("window")
 	if window == "" {
 		window = "24h"
+	}
+	if !store.IsValidWindow(window) {
+		writeError(w, http.StatusBadRequest, "invalid window; use 1h|6h|24h|7d|30d|all")
+		return
 	}
 	points, err := s.store.GetMapPoints(r.Context(), window)
 	if err != nil {
@@ -339,6 +458,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// The server-wide WriteTimeout would otherwise kill this long-lived
+	// stream; clear the per-connection write deadline for SSE only.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	ch := s.hub.subscribe()
 	defer s.hub.unsubscribe(ch)
@@ -390,10 +512,10 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid IP address")
 		return
 	}
-	// Anti-self-lockout: normalize both IPs to handle IPv4-mapped IPv6
-	// (r.RemoteAddr may be "[::ffff:1.2.3.4]:PORT" when req.IP is "1.2.3.4").
-	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if normalizeIP(remoteIP) == normalizeIP(req.IP) {
+	// Anti-self-lockout: compare against the originating client IP, which
+	// accounts for IPv4-mapped IPv6 and for a local reverse proxy in front.
+	remoteIP := clientIP(r)
+	if remoteIP == normalizeIP(req.IP) {
 		writeError(w, http.StatusBadRequest, "cannot ban your own IP address")
 		return
 	}
@@ -463,8 +585,7 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record unban")
 		return
 	}
-	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-	slog.Info("manual unban", "ip", req.IP, "remote", remoteIP, "backend", s.responder.Name())
+	slog.Info("manual unban", "ip", req.IP, "remote", clientIP(r), "backend", s.responder.Name())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unbanned", "ip": req.IP})
 }
 
@@ -641,12 +762,27 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	s.notifyMu.RLock()
+	disp := s.notifyDisp
 	hasNotifier := s.notifyFn != nil
 	s.notifyMu.RUnlock()
+
+	if disp != nil {
+		// Send synchronously, bypassing rules, so the user gets real delivery
+		// feedback instead of "sent" regardless of outcome.
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if err := disp.SendTest(ctx); err != nil {
+			writeError(w, http.StatusBadGateway, "delivery failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+		return
+	}
 	if !hasNotifier {
 		writeError(w, http.StatusBadRequest, "no notifiers configured — save settings first")
 		return
 	}
+	// Fallback for a raw notify func (tests via SetNotifyFunc).
 	s.NotifyEvent(&parse.Event{
 		TS:        time.Now().UTC(),
 		IP:        "203.0.113.1",
@@ -783,17 +919,20 @@ func parseIntQuery(r *http.Request, key string, def int) int {
 	return def
 }
 
-// rateLimiter is a simple token-bucket rate limiter.
+// rateLimiter is a simple token-bucket rate limiter. Tokens are tracked as
+// float64: with integer math, requests arriving faster than one per
+// 1/rate second would each round the refill down to zero while still
+// advancing `last`, so the bucket would never refill under sustained load.
 type rateLimiter struct {
 	mu     sync.Mutex
-	tokens int
-	max    int
-	rate   int // tokens added per second
+	tokens float64
+	max    float64
+	rate   float64 // tokens added per second
 	last   time.Time
 }
 
 func newRateLimiter(rate, burst int) *rateLimiter {
-	return &rateLimiter{tokens: burst, max: burst, rate: rate, last: time.Now()}
+	return &rateLimiter{tokens: float64(burst), max: float64(burst), rate: float64(rate), last: time.Now()}
 }
 
 func (rl *rateLimiter) Allow() bool {
@@ -802,11 +941,11 @@ func (rl *rateLimiter) Allow() bool {
 	now := time.Now()
 	elapsed := now.Sub(rl.last).Seconds()
 	rl.last = now
-	rl.tokens += int(elapsed * float64(rl.rate))
+	rl.tokens += elapsed * rl.rate
 	if rl.tokens > rl.max {
 		rl.tokens = rl.max
 	}
-	if rl.tokens <= 0 {
+	if rl.tokens < 1 {
 		return false
 	}
 	rl.tokens--
@@ -825,4 +964,25 @@ func normalizeIP(s string) string {
 		return v4.String()
 	}
 	return ip.String()
+}
+
+// clientIP returns the normalized IP the request originated from. When the
+// direct peer is a loopback/private address (i.e. a reverse proxy on the same
+// host or LAN), the last X-Forwarded-For hop — the one appended by that
+// trusted proxy — is used instead. XFF from public peers is ignored because
+// it is trivially spoofable.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	host = normalizeIP(host)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && responder.IsPrivate(host) {
+		parts := strings.Split(xff, ",")
+		candidate := normalizeIP(strings.TrimSpace(parts[len(parts)-1]))
+		if net.ParseIP(candidate) != nil {
+			return candidate
+		}
+	}
+	return host
 }

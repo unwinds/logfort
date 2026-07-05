@@ -129,6 +129,70 @@ func TestGetStats(t *testing.T) {
 	if st.Failed != 3 {
 		t.Errorf("Failed: got %d, want 3", st.Failed)
 	}
+	if st.BucketSecs != 3600 {
+		t.Errorf("BucketSecs for 24h: got %d, want 3600", st.BucketSecs)
+	}
+}
+
+func TestGetStats_BucketSecsPerWindow(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	want := map[string]int64{"1h": 300, "6h": 1800, "24h": 3600, "7d": 86400, "30d": 86400, "all": 86400}
+	for window, secs := range want {
+		st, err := s.GetStats(ctx, window)
+		if err != nil {
+			t.Fatalf("GetStats(%s): %v", window, err)
+		}
+		if st.BucketSecs != secs {
+			t.Errorf("BucketSecs(%s): got %d, want %d", window, st.BucketSecs, secs)
+		}
+	}
+}
+
+func TestListEvents_EmptyIsNonNil(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	rows, total, err := s.ListEvents(ctx, store.EventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("total: %d", total)
+	}
+	if rows == nil {
+		t.Error("empty result must be a non-nil slice (JSON [] not null)")
+	}
+
+	points, err := s.GetMapPoints(ctx, "24h")
+	if err != nil {
+		t.Fatalf("map points: %v", err)
+	}
+	if points == nil {
+		t.Error("empty map points must be a non-nil slice")
+	}
+}
+
+func TestCountIPEvents_ExcludesAccepted(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC()
+	// 3 accepted logins (legit automation) + 2 failures from the same IP.
+	for i := 0; i < 3; i++ {
+		_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "accepted", now.Add(-time.Duration(i+1)*time.Minute)))
+	}
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "failed_password", now.Add(-10*time.Minute)))
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "invalid_user", now.Add(-11*time.Minute)))
+
+	count, err := s.CountIPEvents(ctx, "7.7.7.7", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count: got %d, want 2 (accepted logins must not count toward thresholds)", count)
+	}
 }
 
 func TestRetention(t *testing.T) {
@@ -154,6 +218,31 @@ func TestRetention(t *testing.T) {
 	_, total, _ := s.ListEvents(ctx, store.EventQuery{Limit: 10})
 	if total != 1 {
 		t.Errorf("remaining: got %d, want 1", total)
+	}
+}
+
+func TestRetention_PrunesInactiveBans(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Old active ban, old inactive ban, recent inactive ban.
+	if err := s.BanIP(ctx, "1.1.1.1", "nftables", "keep: active"); err != nil {
+		t.Fatal(err)
+	}
+	oldTS := time.Now().AddDate(0, 0, -100)
+	_ = s.InsertEvent(ctx, &parse.Event{TS: oldTS, IP: "2.2.2.2", EventType: "ban", Source: "fail2ban"})
+	_ = s.InsertEvent(ctx, &parse.Event{TS: oldTS.Add(time.Hour), IP: "2.2.2.2", EventType: "unban", Source: "fail2ban"})
+
+	if _, err := s.DeleteOldEvents(ctx, 90); err != nil {
+		t.Fatalf("retention: %v", err)
+	}
+
+	all, err := s.ListBans(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].IP != "1.1.1.1" || !all[0].Active {
+		t.Errorf("want only the active ban to survive, got %+v", all)
 	}
 }
 

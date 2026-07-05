@@ -67,17 +67,19 @@ func (s *stubStore) ListBans(_ context.Context, _ bool) ([]store.BanRow, error) 
 func (s *stubStore) GetMapPoints(_ context.Context, _ string) ([]store.MapPoint, error) {
 	return []store.MapPoint{}, nil
 }
-func (s *stubStore) DeleteOldEvents(_ context.Context, _ int) (int64, error)           { return 0, nil }
-func (s *stubStore) BanIP(_ context.Context, _, _, _ string) error                      { return nil }
-func (s *stubStore) UnbanIP(_ context.Context, _ string) error                          { return nil }
+func (s *stubStore) DeleteOldEvents(_ context.Context, _ int) (int64, error) { return 0, nil }
+func (s *stubStore) BanIP(_ context.Context, _, _, _ string) error           { return nil }
+func (s *stubStore) UnbanIP(_ context.Context, _ string) error               { return nil }
 func (s *stubStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
-func (s *stubStore) GetSetting(_ context.Context, _ string) (string, bool, error)        { return "", false, nil }
-func (s *stubStore) SetSetting(_ context.Context, _, _ string) error                    { return nil }
-func (s *stubStore) SetSettings(_ context.Context, _ map[string]string) error           { return nil }
-func (s *stubStore) GetAllSettings(_ context.Context) (map[string]string, error)        { return nil, nil }
-func (s *stubStore) Close() error                                                        { return nil }
+func (s *stubStore) GetSetting(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (s *stubStore) SetSetting(_ context.Context, _, _ string) error             { return nil }
+func (s *stubStore) SetSettings(_ context.Context, _ map[string]string) error    { return nil }
+func (s *stubStore) GetAllSettings(_ context.Context) (map[string]string, error) { return nil, nil }
+func (s *stubStore) Close() error                                                { return nil }
 
 const sshFail = "Jun 21 14:32:01 myhost sshd[12345]: Failed password for invalid user admin from 203.0.113.5 port 54321 ssh2"
 const sshAccept = "Jun 21 14:32:10 myhost sshd[12348]: Accepted publickey for bob from 192.0.2.11 port 22001 ssh2"

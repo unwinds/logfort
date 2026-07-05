@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LogFort</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%2388c0d0' d='M8 1l6 2.5v4c0 3.5-2.5 6.5-6 7.5C2.5 14 0 11 0 7.5v-4L8 1z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/leaflet.min.css">
   <style>
     /* === THEMES ============================================================ */
@@ -422,7 +423,22 @@
       <div class="section-toolbar">
         <h2>Events</h2>
         <span id="events-total-label" style="color:var(--muted);font-size:11px;"></span>
+        <select id="events-type-filter" onchange="eventsPage=0;loadEventsPage()" style="font-size:11px;padding:3px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px;">
+          <option value="">All types</option>
+          <option value="failed_password">failed_password</option>
+          <option value="invalid_user">invalid_user</option>
+          <option value="accepted">accepted</option>
+          <option value="pam_failure">pam_failure</option>
+          <option value="max_auth">max_auth</option>
+          <option value="disconnect_preauth">disconnect_preauth</option>
+          <option value="http_auth_fail">http_auth_fail</option>
+          <option value="ban">ban</option>
+          <option value="unban">unban</option>
+        </select>
+        <input type="text" id="events-ip-filter" placeholder="Filter by IP" onchange="eventsPage=0;loadEventsPage()"
+               style="width:130px;font-size:11px;padding:3px 7px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px;font-family:monospace;">
         <div class="toolbar-right">
+          <button class="btn btn-muted" onclick="exportEventsCSV()" title="Download current filter as CSV">CSV</button>
           <span id="events-page-label" style="color:var(--muted);font-size:11px;"></span>
           <select id="events-page-size" onchange="eventsPageSize=+this.value;eventsPage=0;loadEventsPage()" style="font-size:11px;padding:3px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px;">
             <option value="50">50/page</option>
@@ -635,7 +651,7 @@
                           <option value="24h">24h</option>
                         </select>
                       </div>
-                      <small>Alert when a single IP exceeds N events in window</small>
+                      <small>Alert when a single IP exceeds N failed attempts in window</small>
                     </div>
                   </label>
                 </div>
@@ -702,7 +718,7 @@
                       <option value="24h">24 hours</option>
                     </select>
                   </div>
-                  <span class="field-hint">Any IP exceeding this number of failed events within the window will be banned automatically.</span>
+                  <span class="field-hint">Any IP exceeding this number of failed attempts within the window is banned automatically. Accepted logins never count toward the threshold.</span>
                 </div>
               </div>
             </div>
@@ -830,7 +846,7 @@ function switchSection(s) {
 }
 
 // ── Timeline ───────────────────────────────────────────────────────────────
-function drawTimeline(buckets, win) {
+function drawTimeline(buckets, win, apiBucketSecs) {
   const canvas = document.getElementById('timeline');
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth, H = 52;
@@ -841,7 +857,7 @@ function drawTimeline(buckets, win) {
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
     ctx.font = '11px system-ui'; ctx.fillText('No data', 8, H/2+4); return;
   }
-  const bucketSecs = {'1h':3600,'6h':3600,'24h':3600,'7d':86400,'30d':86400,'all':86400}[win] || 3600;
+  const bucketSecs = apiBucketSecs || {'1h':300,'6h':1800,'24h':3600,'7d':86400,'30d':86400,'all':86400}[win] || 3600;
   const windowSecs = {'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000}[win];
   const now = Math.floor(Date.now()/1000);
   const countMap = Object.fromEntries(buckets.map(b => [b.bucket_ts, b.count]));
@@ -873,7 +889,7 @@ async function loadStats() {
     document.getElementById('stat-failed').textContent   = fmt(d.failed);
     document.getElementById('stat-accepted').textContent = fmt(d.accepted);
     document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
-    drawTimeline(d.timeline, w);
+    drawTimeline(d.timeline, w, d.bucket_secs);
     renderTopList('top-ips',       'Top Attacker IPs', d.top_ips,       t=>`<span class="name ip">${esc(t.ip)}</span>`,       t=>t.count);
     renderTopList('top-usernames', 'Top Usernames',    d.top_usernames, t=>`<span class="name user">${esc(t.username)}</span>`,t=>t.count);
     renderTopList('top-countries', 'Top Countries',    d.top_countries, t=>`<span class="name">${esc(t.country||'—')}</span>`, t=>t.count);
@@ -945,14 +961,26 @@ async function loadDashboardEvents() {
 
 let eventsPage=0, eventsPageSize=100;
 
-async function loadEventsPage() {
+function eventsFilterParams() {
   const w = document.getElementById('window-select').value;
   const wSecs = {'1h':3600,'6h':21600,'24h':86400,'7d':604800,'30d':2592000};
-  const since = wSecs[w] ? '&since='+(Math.floor(Date.now()/1000)-wSecs[w]) : '';
+  let p = wSecs[w] ? '&since='+(Math.floor(Date.now()/1000)-wSecs[w]) : '';
+  const type = document.getElementById('events-type-filter').value;
+  const ip   = document.getElementById('events-ip-filter').value.trim();
+  if (type) p += '&type='+encodeURIComponent(type);
+  if (ip)   p += '&ip='+encodeURIComponent(ip);
+  return p;
+}
+
+function exportEventsCSV() {
+  window.open('/api/events.csv?limit=10000'+eventsFilterParams(), '_blank');
+}
+
+async function loadEventsPage() {
   const el = document.getElementById('events-full-container');
   const offset = eventsPage*eventsPageSize;
   try {
-    const d = await fetch(`/api/events?limit=${eventsPageSize}&offset=${offset}${since}`).then(r=>r.json());
+    const d = await fetch(`/api/events?limit=${eventsPageSize}&offset=${offset}${eventsFilterParams()}`).then(r=>r.json());
     const events = d.events||[], total = d.total||0;
     const totalPages = Math.max(1,Math.ceil(total/eventsPageSize));
     document.getElementById('events-total-label').textContent = total ? `${fmt(total)} total` : '';
@@ -1177,7 +1205,10 @@ function switchSettingsTab(tab) {
 // ── System info (General tab) ──────────────────────────────────────────────
 async function loadSystemInfo() {
   try {
-    const d = await fetch('/api/system').then(r=>r.json());
+    const [d, h] = await Promise.all([
+      fetch('/api/system').then(r=>r.json()),
+      fetch('/api/health').then(r=>r.json()).catch(()=>({})),
+    ]);
     const rows = [
       {k:'Backend',    v:d.backend},
       {k:'Log paths',  v:(d.log_paths||[]).join(', ')||'—'},
@@ -1187,6 +1218,8 @@ async function loadSystemInfo() {
       {k:'Responder',  v:d.responder_enabled?d.responder_backend:'Disabled', cls:d.responder_enabled?'sysinfo-ok':'sysinfo-off'},
       {k:'Auth',       v:d.auth_enabled?'Enabled':'Disabled',      cls:d.auth_enabled?'sysinfo-warn':'sysinfo-off'},
       {k:'Listen',     v:d.listen},
+      h.parsed_total!=null ? {k:'Lines parsed', v:fmt(h.parsed_total), cls:'sysinfo-ok'} : null,
+      h.unparsed_total!=null ? {k:'Lines unparsed', v:fmt(h.unparsed_total), cls:h.unparsed_total>0?'sysinfo-warn':''} : null,
     ].filter(Boolean);
     document.getElementById('system-info-rows').innerHTML = rows.map(r =>
       `<div class="sysinfo-row"><span class="sysinfo-key">${esc(r.k)}</span><span class="sysinfo-val ${r.cls||''}">${esc(r.v||'—')}</span></div>`

@@ -16,8 +16,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/logfort
 
 # ---------------------------------------------------------------------------
-# Final image — minimal alpine for health-check support.
-# Switch to distroless/static when a native health-check binary is added.
+# Final image — debian slim: systemd provides journalctl for the journald
+# backend (not packaged for Alpine stable), wget serves the HEALTHCHECK.
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim
 

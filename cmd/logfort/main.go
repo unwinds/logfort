@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,6 +26,14 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "-version", "--version", "-v":
+			fmt.Println("logfort " + version)
+			return
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("configuration error", "err", err)
@@ -121,8 +130,8 @@ func main() {
 	srv.SetDispatcher(dispatcher) // nil-safe; wires Dispatcher.Notify and enables Stop() on swap
 	pipeline.SetPublishHook(func(ev *parse.Event) {
 		srv.PublishEvent(ev)
-		srv.NotifyEvent(ev)   // uses current dispatcher, swappable via settings API
-		srv.AutoBanEvent(ev)  // auto-ban if threshold exceeded and feature is enabled
+		srv.NotifyEvent(ev)  // uses current dispatcher, swappable via settings API
+		srv.AutoBanEvent(ev) // auto-ban if threshold exceeded and feature is enabled
 	})
 
 	httpSrv := &http.Server{
@@ -156,10 +165,20 @@ func main() {
 	// so that changes made via the settings UI take effect without a restart.
 	go runRetention(ctx, st, cfg.RetentionDays)
 
+	// Re-apply active bans to the firewall. nftables sets live in kernel
+	// memory and are empty after a host reboot, while the DB still lists the
+	// bans as active. fail2ban restores its own bans, so only nftables needs this.
+	if cfg.ResponderEnabled && resp.Name() == "nftables" {
+		go reconcileBans(ctx, st, resp)
+	}
+
 	// Wait for shutdown signal.
 	<-ctx.Done()
 	slog.Info("shutting down")
 
+	// Disconnect SSE streams first — otherwise http.Server.Shutdown waits its
+	// full timeout for connections that would never finish on their own.
+	srv.Shutdown()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
@@ -168,7 +187,55 @@ func main() {
 	srv.Close()
 }
 
+// reconcileBans re-applies active bans recorded by this responder backend to
+// the firewall. Bans mirrored from fail2ban.log (source="fail2ban") are
+// skipped — fail2ban manages its own persistence.
+func reconcileBans(ctx context.Context, st store.Store, resp responder.Responder) {
+	bans, err := st.ListBans(ctx, true)
+	if err != nil {
+		slog.Warn("ban reconciliation: list bans", "err", err)
+		return
+	}
+	applied := 0
+	for _, b := range bans {
+		if b.Source != resp.Name() {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if err := resp.Ban(ctx, b.IP); err != nil {
+			slog.Warn("ban reconciliation failed", "ip", b.IP, "err", err)
+			continue
+		}
+		applied++
+	}
+	if applied > 0 {
+		slog.Info("re-applied active bans to firewall", "count", applied)
+	}
+}
+
 func runRetention(ctx context.Context, st store.Store, defaultDays int) {
+	cleanup := func() {
+		days := defaultDays
+		// Read the current retention_days from DB in case it was changed via the UI.
+		if v, ok, err := st.GetSetting(ctx, "general.retention_days"); err == nil && ok {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				days = n
+			}
+		}
+		n, err := st.DeleteOldEvents(ctx, days)
+		if err != nil {
+			slog.Error("retention cleanup", "err", err)
+		} else if n > 0 {
+			slog.Info("retention cleanup", "deleted", n, "retention_days", days)
+		}
+	}
+
+	// Run once at startup — a ticker alone never fires on hosts that restart
+	// the container more often than every 24 h.
+	cleanup()
+
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	for {
@@ -176,19 +243,7 @@ func runRetention(ctx context.Context, st store.Store, defaultDays int) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			days := defaultDays
-			// Read the current retention_days from DB in case it was changed via the UI.
-			if v, ok, err := st.GetSetting(ctx, "general.retention_days"); err == nil && ok {
-				if n, err := strconv.Atoi(v); err == nil && n > 0 {
-					days = n
-				}
-			}
-			n, err := st.DeleteOldEvents(ctx, days)
-			if err != nil {
-				slog.Error("retention cleanup", "err", err)
-			} else if n > 0 {
-				slog.Info("retention cleanup", "deleted", n, "retention_days", days)
-			}
+			cleanup()
 		}
 	}
 }

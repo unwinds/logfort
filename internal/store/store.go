@@ -25,7 +25,8 @@ type Store interface {
 	BanIP(ctx context.Context, ip, source, reason string) error
 	// UnbanIP marks all active bans for an IP as inactive.
 	UnbanIP(ctx context.Context, ip string) error
-	// CountIPEvents returns the number of non-ban/unban events from ip since the given time.
+	// CountIPEvents returns the number of failed (non-ban/unban/accepted)
+	// events from ip since the given time.
 	CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error)
 	// GetSetting returns the value for key. found is false when the key does not exist.
 	GetSetting(ctx context.Context, key string) (value string, found bool, err error)
@@ -90,16 +91,17 @@ type BanRow struct {
 
 // Stats holds aggregate statistics for a time window.
 type Stats struct {
-	Window          string         `json:"window"`
-	TotalAttempts   int64          `json:"total_attempts"`
-	UniqueIPs       int64          `json:"unique_ips"`
-	Failed          int64          `json:"failed"`
-	Accepted        int64          `json:"accepted"`
-	CurrentlyBanned int64          `json:"currently_banned"`
-	TopIPs          []TopIP        `json:"top_ips"`
-	TopCountries    []TopCountry   `json:"top_countries"`
-	TopUsernames    []TopUsername  `json:"top_usernames"`
-	Timeline        []TimeBucket   `json:"timeline"`
+	Window          string        `json:"window"`
+	BucketSecs      int64         `json:"bucket_secs"`
+	TotalAttempts   int64         `json:"total_attempts"`
+	UniqueIPs       int64         `json:"unique_ips"`
+	Failed          int64         `json:"failed"`
+	Accepted        int64         `json:"accepted"`
+	CurrentlyBanned int64         `json:"currently_banned"`
+	TopIPs          []TopIP       `json:"top_ips"`
+	TopCountries    []TopCountry  `json:"top_countries"`
+	TopUsernames    []TopUsername `json:"top_usernames"`
+	Timeline        []TimeBucket  `json:"timeline"`
 }
 
 // TopIP holds an IP address and its attempt count.

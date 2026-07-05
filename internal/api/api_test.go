@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,11 +52,13 @@ func (m *mockStore) UnbanIP(_ context.Context, ip string) error {
 func (m *mockStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
-func (m *mockStore) GetSetting(_ context.Context, _ string) (string, bool, error)        { return "", false, nil }
-func (m *mockStore) SetSetting(_ context.Context, _, _ string) error                    { return nil }
-func (m *mockStore) SetSettings(_ context.Context, _ map[string]string) error           { return nil }
-func (m *mockStore) GetAllSettings(_ context.Context) (map[string]string, error)        { return nil, nil }
-func (m *mockStore) Close() error                                                    { return nil }
+func (m *mockStore) GetSetting(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
+}
+func (m *mockStore) SetSetting(_ context.Context, _, _ string) error             { return nil }
+func (m *mockStore) SetSettings(_ context.Context, _ map[string]string) error    { return nil }
+func (m *mockStore) GetAllSettings(_ context.Context) (map[string]string, error) { return nil, nil }
+func (m *mockStore) Close() error                                                { return nil }
 
 // mockResponder tracks ban/unban calls.
 type mockResponder struct {
@@ -72,7 +75,7 @@ func (mr *mockResponder) Unban(_ context.Context, ip string) error {
 	return nil
 }
 func (mr *mockResponder) List(_ context.Context) ([]string, error) { return mr.banned, nil }
-func (mr *mockResponder) Name() string                              { return "mock" }
+func (mr *mockResponder) Name() string                             { return "mock" }
 
 func newTestServer(t *testing.T, responderEnabled bool) (*api.Server, *mockStore, *mockResponder) {
 	t.Helper()
@@ -291,6 +294,74 @@ func TestBasicAuth_HealthExempt(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("%s must be exempt from auth, got %d", path, w.Code)
 		}
+	}
+}
+
+func TestMetrics(t *testing.T) {
+	srv, _, _ := newTestServer(t, true)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("metrics: %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"logfort_build_info",
+		"logfort_lines_parsed_total",
+		"logfort_lines_unparsed_total",
+		"logfort_bans_active 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestEventsCSV(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	req := httptest.NewRequest(http.MethodGet, "/api/events.csv?type=failed_password", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("csv: %d — %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("content type: %q", ct)
+	}
+	if !strings.HasPrefix(w.Body.String(), "ts,ip,event_type") {
+		t.Errorf("missing CSV header: %q", w.Body.String())
+	}
+}
+
+func TestStats_InvalidWindow(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats?window=13x", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for invalid window, got %d", w.Code)
+	}
+}
+
+func TestNotifyTest_NotConfigured(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	w := postJSON(t, srv, "/api/notify/test", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 when no notifiers configured, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q", got)
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("X-Frame-Options = %q", got)
 	}
 }
 

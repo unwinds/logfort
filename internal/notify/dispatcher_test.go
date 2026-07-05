@@ -30,21 +30,21 @@ type stubStore struct {
 func (s *stubStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return s.countResult, nil
 }
-func (s *stubStore) InsertEvent(context.Context, *parse.Event) error                     { return nil }
+func (s *stubStore) InsertEvent(context.Context, *parse.Event) error { return nil }
 func (s *stubStore) ListEvents(context.Context, store.EventQuery) ([]store.EventRow, int64, error) {
 	return nil, 0, nil
 }
-func (s *stubStore) GetStats(context.Context, string) (*store.Stats, error)       { return nil, nil }
-func (s *stubStore) ListBans(context.Context, bool) ([]store.BanRow, error)       { return nil, nil }
+func (s *stubStore) GetStats(context.Context, string) (*store.Stats, error)         { return nil, nil }
+func (s *stubStore) ListBans(context.Context, bool) ([]store.BanRow, error)         { return nil, nil }
 func (s *stubStore) GetMapPoints(context.Context, string) ([]store.MapPoint, error) { return nil, nil }
-func (s *stubStore) DeleteOldEvents(context.Context, int) (int64, error)          { return 0, nil }
-func (s *stubStore) BanIP(context.Context, string, string, string) error                    { return nil }
-func (s *stubStore) UnbanIP(context.Context, string) error                                  { return nil }
-func (s *stubStore) GetSetting(context.Context, string) (string, bool, error)               { return "", false, nil }
-func (s *stubStore) SetSetting(context.Context, string, string) error                       { return nil }
-func (s *stubStore) SetSettings(context.Context, map[string]string) error                   { return nil }
-func (s *stubStore) GetAllSettings(context.Context) (map[string]string, error)              { return nil, nil }
-func (s *stubStore) Close() error                                                            { return nil }
+func (s *stubStore) DeleteOldEvents(context.Context, int) (int64, error)            { return 0, nil }
+func (s *stubStore) BanIP(context.Context, string, string, string) error            { return nil }
+func (s *stubStore) UnbanIP(context.Context, string) error                          { return nil }
+func (s *stubStore) GetSetting(context.Context, string) (string, bool, error)       { return "", false, nil }
+func (s *stubStore) SetSetting(context.Context, string, string) error               { return nil }
+func (s *stubStore) SetSettings(context.Context, map[string]string) error           { return nil }
+func (s *stubStore) GetAllSettings(context.Context) (map[string]string, error)      { return nil, nil }
+func (s *stubStore) Close() error                                                   { return nil }
 
 // --- helpers ---
 
@@ -208,6 +208,23 @@ func TestThresholdRule_cooldown(t *testing.T) {
 func TestNilDispatcher_safe(t *testing.T) {
 	var d *Dispatcher
 	d.Notify(event("accepted", "1.2.3.4", "DE")) // must not panic
+	if err := d.SendTest(context.Background()); err == nil {
+		t.Error("nil dispatcher SendTest must return an error")
+	}
+}
+
+func TestSendTest_BypassesRules(t *testing.T) {
+	// Dispatcher configured with a rule that would never match a test event.
+	d, mn := makeDispatcher(t, []string{"accepted_login"}, &mockNotifier{}, nil)
+	if err := d.SendTest(context.Background()); err != nil {
+		t.Fatalf("SendTest: %v", err)
+	}
+	if len(mn.msgs) != 1 {
+		t.Fatalf("want 1 test message regardless of rules, got %d", len(mn.msgs))
+	}
+	if mn.msgs[0].EventType != "test" {
+		t.Errorf("event type: %q", mn.msgs[0].EventType)
+	}
 }
 
 func TestEscapeHTML(t *testing.T) {

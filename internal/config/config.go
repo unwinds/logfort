@@ -9,38 +9,38 @@ import (
 )
 
 const (
-	DefaultRetentionDays  = 90
+	DefaultRetentionDays    = 90
 	DefaultAutoBanThreshold = 50
 	DefaultAutoBanWindow    = "1h"
 )
 
 // Config holds all runtime configuration loaded from environment variables.
 type Config struct {
-	Listen        string
-	Backend       string // "file" or "journald"
-	LogPaths      []string
-	JournaldUnit  string
-	Fail2BanLog   string
-	DBPath        string
-	GeoIPDB       string
-	RetentionDays int
-	HomeLat       *float64
-	HomeLon       *float64
-	AuthEnabled   bool
-	AuthUser      string
-	AuthPass      string
-	ResponderEnabled bool
-	ResponderBackend string
-	NftTable      string
-	NftSet        string
-	Fail2BanJail  string
-	IgnoreIPs     []string
+	Listen              string
+	Backend             string // "file" or "journald"
+	LogPaths            []string
+	JournaldUnit        string
+	Fail2BanLog         string
+	DBPath              string
+	GeoIPDB             string
+	RetentionDays       int
+	HomeLat             *float64
+	HomeLon             *float64
+	AuthEnabled         bool
+	AuthUser            string
+	AuthPass            string
+	ResponderEnabled    bool
+	ResponderBackend    string
+	NftTable            string
+	NftSet              string
+	Fail2BanJail        string
+	IgnoreIPs           []string
 	NotifyWebhookURL    string
 	NotifyTelegramToken string
 	NotifyTelegramChat  string
 	NotifyDiscordURL    string
-	NotifyRules   []string
-	LogLevel      slog.Level
+	NotifyRules         []string
+	LogLevel            slog.Level
 
 	// UI-configurable settings (persisted in DB; no env vars)
 	AutoBanEnabled   bool
@@ -51,19 +51,23 @@ type Config struct {
 // Load reads configuration from environment variables with sane defaults.
 func Load() (*Config, error) {
 	cfg := &Config{
-		Listen:           getEnv("LOGFORT_LISTEN", "127.0.0.1:8080"),
-		Backend:          getEnv("LOGFORT_BACKEND", "file"),
-		JournaldUnit:     getEnv("LOGFORT_JOURNALD_UNIT", "ssh.service"),
-		Fail2BanLog:      getEnv("LOGFORT_FAIL2BAN_LOG", ""),
-		DBPath:           getEnv("LOGFORT_DB_PATH", "/data/logfort.db"),
-		GeoIPDB:          getEnv("LOGFORT_GEOIP_DB", "/data/geo.mmdb"),
-		NftTable:         getEnv("LOGFORT_NFT_TABLE", "inet filter"),
-		NftSet:           getEnv("LOGFORT_NFT_SET", "logfort_block"),
-		Fail2BanJail:     getEnv("LOGFORT_FAIL2BAN_JAIL", "sshd"),
-		NotifyWebhookURL: getEnv("LOGFORT_NOTIFY_WEBHOOK_URL", ""),
+		Listen:              getEnv("LOGFORT_LISTEN", "127.0.0.1:8080"),
+		Backend:             getEnv("LOGFORT_BACKEND", "file"),
+		JournaldUnit:        getEnv("LOGFORT_JOURNALD_UNIT", "ssh.service"),
+		Fail2BanLog:         getEnv("LOGFORT_FAIL2BAN_LOG", ""),
+		DBPath:              getEnv("LOGFORT_DB_PATH", "/data/logfort.db"),
+		GeoIPDB:             getEnv("LOGFORT_GEOIP_DB", "/data/geo.mmdb"),
+		NftTable:            getEnv("LOGFORT_NFT_TABLE", "inet filter"),
+		NftSet:              getEnv("LOGFORT_NFT_SET", "logfort_block"),
+		Fail2BanJail:        getEnv("LOGFORT_FAIL2BAN_JAIL", "sshd"),
+		NotifyWebhookURL:    getEnv("LOGFORT_NOTIFY_WEBHOOK_URL", ""),
 		NotifyTelegramToken: getEnv("LOGFORT_NOTIFY_TELEGRAM_TOKEN", ""),
 		NotifyTelegramChat:  getEnv("LOGFORT_NOTIFY_TELEGRAM_CHAT_ID", ""),
 		NotifyDiscordURL:    getEnv("LOGFORT_NOTIFY_DISCORD_URL", ""),
+		// UI-only settings get sane defaults here so a failed DB overlay
+		// (e.g. transient read error at startup) never leaves zero values.
+		AutoBanThreshold: DefaultAutoBanThreshold,
+		AutoBanWindow:    DefaultAutoBanWindow,
 	}
 
 	// Log paths (comma-separated)

@@ -1,4 +1,6 @@
 # Build artifacts
+/logfort
+*.exe
 /sshwatch
 /dist/
 
