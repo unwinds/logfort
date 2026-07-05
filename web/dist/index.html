@@ -21,6 +21,20 @@
       --danger:    #bf616a;
       --warn:      #ebcb8b;
       --shadow:    0 2px 8px rgba(0,0,0,.35);
+      /* sidebar + mobile nav */
+      --sb-bg:        #2e3440;
+      --sb-border:    rgba(255,255,255,.07);
+      --sb-text:      #eceff4;
+      --sb-muted:     #7a90a8;
+      --sb-dim:       #4c566a;
+      --sb-accent:    #88c0d0;
+      --sb-accent-bg: rgba(136,192,208,.08);
+      --sb-hover:     rgba(255,255,255,.05);
+      /* attack map */
+      --map-bg:        #2e3440;
+      --map-land:      #1a2035;
+      --map-land-line: #2d3555;
+      --map-mesh:      #3a4060;
     }
     [data-theme="light"] {
       --bg:        #f0f3f7;
@@ -35,6 +49,20 @@
       --danger:    #bf616a;
       --warn:      #b97f10;
       --shadow:    0 1px 3px rgba(0,0,0,.1),0 0 0 1px rgba(0,0,0,.06);
+      /* sidebar + mobile nav */
+      --sb-bg:        #ffffff;
+      --sb-border:    #dfe5ec;
+      --sb-text:      #2e3440;
+      --sb-muted:     #5a6e84;
+      --sb-dim:       #8fa1b3;
+      --sb-accent:    #5e81ac;
+      --sb-accent-bg: rgba(94,129,172,.1);
+      --sb-hover:     rgba(0,0,0,.04);
+      /* attack map */
+      --map-bg:        #cfdbe6;
+      --map-land:      #f2f5f9;
+      --map-land-line: #b9c6d4;
+      --map-mesh:      #a9b8c9;
     }
 
     /* === RESET & BASE ====================================================== */
@@ -47,15 +75,16 @@
       font-size:13px; display:flex;
     }
 
-    /* === SIDEBAR (always dark) ============================================= */
+    /* === SIDEBAR (theme-aware via --sb-* variables) ======================== */
     .sidebar {
       width:220px; flex-shrink:0;
-      background:#2e3440; border-right:1px solid rgba(255,255,255,.07);
+      background:var(--sb-bg); border-right:1px solid var(--sb-border);
       display:flex; flex-direction:column; height:100vh; overflow:hidden;
+      transition:background-color .2s;
     }
     .sidebar-logo {
       padding:18px 16px 14px;
-      border-bottom:1px solid rgba(255,255,255,.07);
+      border-bottom:1px solid var(--sb-border);
     }
     .logo-row { display:flex; align-items:center; gap:10px; }
     .logo-mark {
@@ -64,33 +93,33 @@
       display:flex; align-items:center; justify-content:center;
       box-shadow:0 2px 8px rgba(136,192,208,.25);
     }
-    .logo-text h1 { font-size:15px; font-weight:700; color:#eceff4; letter-spacing:-.3px; line-height:1; }
-    .logo-text .tagline { font-size:10px; color:#4c566a; margin-top:3px; }
+    .logo-text h1 { font-size:15px; font-weight:700; color:var(--sb-text); letter-spacing:-.3px; line-height:1; }
+    .logo-text .tagline { font-size:10px; color:var(--sb-dim); margin-top:3px; }
     .sidebar-nav { flex:1; padding:6px 0; overflow-y:auto; }
     .nav-item {
       display:flex; align-items:center; gap:9px;
       padding:8px 14px; cursor:pointer; border:none; background:none;
-      color:#7a90a8; font-size:12px; font-weight:500; width:100%; text-align:left;
+      color:var(--sb-muted); font-size:12px; font-weight:500; width:100%; text-align:left;
       border-left:2px solid transparent; transition:color .1s,background .1s,border-color .1s;
     }
-    .nav-item:hover { background:rgba(255,255,255,.05); color:#eceff4; }
-    .nav-item.active { color:#88c0d0; border-left-color:#88c0d0; background:rgba(136,192,208,.08); }
+    .nav-item:hover { background:var(--sb-hover); color:var(--sb-text); }
+    .nav-item.active { color:var(--sb-accent); border-left-color:var(--sb-accent); background:var(--sb-accent-bg); }
     .nav-icon { width:16px; height:16px; flex-shrink:0; }
     .nav-badge {
       margin-left:auto; font-size:10px; font-weight:700; padding:1px 7px;
-      border-radius:10px; background:rgba(235,203,139,.2); color:#ebcb8b; min-width:20px; text-align:center;
+      border-radius:10px; background:rgba(235,203,139,.2); color:var(--warn); min-width:20px; text-align:center;
     }
-    .sidebar-bottom { padding:12px 14px; border-top:1px solid rgba(255,255,255,.07); }
+    .sidebar-bottom { padding:12px 14px; border-top:1px solid var(--sb-border); }
     .status-row { display:flex; align-items:center; gap:7px; margin-bottom:6px; }
     .status-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:#a3be8c; box-shadow:0 0 5px rgba(163,190,140,.5); }
     .status-dot.offline { background:#bf616a; box-shadow:0 0 5px rgba(191,97,106,.5); }
-    .sidebar-meta { font-size:10.5px; color:#4c566a; line-height:1.5; }
+    .sidebar-meta { font-size:10.5px; color:var(--sb-dim); line-height:1.5; }
     .theme-btn {
       margin-top:8px; width:100%; display:flex; align-items:center; gap:7px;
-      padding:5px 8px; border-radius:6px; border:1px solid rgba(255,255,255,.08);
-      background:none; color:#4c566a; font-size:11px; cursor:pointer; transition:background .12s,color .12s;
+      padding:5px 8px; border-radius:6px; border:1px solid var(--sb-border);
+      background:none; color:var(--sb-dim); font-size:11px; cursor:pointer; transition:background .12s,color .12s;
     }
-    .theme-btn:hover { background:rgba(255,255,255,.06); color:#a5b8cc; }
+    .theme-btn:hover { background:var(--sb-hover); color:var(--sb-muted); }
 
     /* === TOPBAR ============================================================ */
     .main-area { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
@@ -218,7 +247,7 @@
 
     /* === MAP =============================================================== */
     #map-el { flex:1; }
-    .leaflet-container { background:#2e3440 !important; }
+    .leaflet-container { background:var(--map-bg) !important; }
     .leaflet-popup-content-wrapper,.leaflet-popup-tip { background:var(--surface); color:var(--text); border:1px solid var(--border); box-shadow:0 4px 20px rgba(0,0,0,.4); }
     .leaflet-popup-content { font-size:12px; line-height:1.7; }
     .leaflet-popup-content b { color:var(--accent); font-family:monospace; }
@@ -305,16 +334,16 @@
       .dash-grid { grid-template-columns:1fr; }
       .top-sidebar { display:none; }
       .settings-grid { grid-template-columns:1fr; }
-      body::after { content:''; display:block; position:fixed; bottom:0; left:0; right:0; height:54px; background:#2e3440; border-top:1px solid rgba(255,255,255,.07); z-index:100; }
-      .mobile-nav { display:flex !important; position:fixed; bottom:0; left:0; right:0; height:54px; z-index:101; background:#2e3440; border-top:1px solid rgba(255,255,255,.07); }
+      body::after { content:''; display:block; position:fixed; bottom:0; left:0; right:0; height:54px; background:var(--sb-bg); border-top:1px solid var(--sb-border); z-index:100; }
+      .mobile-nav { display:flex !important; position:fixed; bottom:0; left:0; right:0; height:54px; z-index:101; background:var(--sb-bg); border-top:1px solid var(--sb-border); }
       .main-area { padding-bottom:54px; }
       #events-table th:nth-child(6),#events-table td:nth-child(6),#events-table th:nth-child(7),#events-table td:nth-child(7) { display:none; }
       #bans-table th:nth-child(4),#bans-table td:nth-child(4) { display:none; }
       #map-el { height:55vh; min-height:280px; }
     }
     .mobile-nav { display:none; }
-    .mobile-nav-item { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; color:#4c566a; font-size:9px; font-weight:600; border:none; background:none; padding:0; transition:color .12s; }
-    .mobile-nav-item.active { color:#88c0d0; }
+    .mobile-nav-item { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; color:var(--sb-dim); font-size:9px; font-weight:600; border:none; background:none; padding:0; transition:color .12s; }
+    .mobile-nav-item.active { color:var(--sb-accent); }
     .mobile-nav-icon { font-size:17px; line-height:1; }
   </style>
 </head>
@@ -359,7 +388,7 @@
   <div class="sidebar-bottom">
     <div class="status-row">
       <div class="status-dot" id="status-dot"></div>
-      <span id="version-label" style="font-size:11px;color:#7a90a8;">—</span>
+      <span id="version-label" style="font-size:11px;color:var(--sb-muted);">—</span>
     </div>
     <div class="sidebar-meta" id="uptime-label"></div>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn">
@@ -797,6 +826,8 @@ let currentSection = 'dashboard';
 // ── Theme ──────────────────────────────────────────────────────────────────
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
+  restyleMap();          // country fills are Leaflet layer styles, not CSS
+  redrawTimeline();      // canvas colors are sampled at draw time
   const icon = document.getElementById('theme-icon');
   const label = document.getElementById('theme-label');
   if (theme === 'dark') {
@@ -823,7 +854,8 @@ function switchSection(s) {
   currentSection = s;
   SECTIONS.forEach(id => {
     const el = document.getElementById('section-' + id);
-    if (el) el.style.display = id === s ? (id === 'settings' || id === 'map' ? 'flex' : 'block') : 'none';
+    // All sections except the dashboard are flex columns (toolbar + flex:1 body).
+    if (el) el.style.display = id === s ? (id === 'dashboard' ? 'block' : 'flex') : 'none';
     const nb = document.getElementById('nav-' + id);
     if (nb) nb.classList.toggle('active', id === s);
     const mb = document.getElementById('mnav-' + id);
@@ -846,6 +878,12 @@ function switchSection(s) {
 }
 
 // ── Timeline ───────────────────────────────────────────────────────────────
+let lastTimeline = null; // {buckets, win, secs} — kept for theme-toggle redraw
+
+function redrawTimeline() {
+  if (lastTimeline) drawTimeline(lastTimeline.buckets, lastTimeline.win, lastTimeline.secs);
+}
+
 function drawTimeline(buckets, win, apiBucketSecs) {
   const canvas = document.getElementById('timeline');
   const dpr = window.devicePixelRatio || 1;
@@ -889,6 +927,7 @@ async function loadStats() {
     document.getElementById('stat-failed').textContent   = fmt(d.failed);
     document.getElementById('stat-accepted').textContent = fmt(d.accepted);
     document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
+    lastTimeline = {buckets: d.timeline, win: w, secs: d.bucket_secs};
     drawTimeline(d.timeline, w, d.bucket_secs);
     renderTopList('top-ips',       'Top Attacker IPs', d.top_ips,       t=>`<span class="name ip">${esc(t.ip)}</span>`,       t=>t.count);
     renderTopList('top-usernames', 'Top Usernames',    d.top_usernames, t=>`<span class="name user">${esc(t.username)}</span>`,t=>t.count);
@@ -1024,6 +1063,10 @@ function prependLiveEvent(ev) {
   if (!tbody) return;
   const row = document.createElement('tr');
   row.className = 'live-row';
+  // Column count must match eventsTable(): with the responder enabled the
+  // table has an extra actions column — omit it here and rows shift left.
+  const banBtn = (responderEnabled && ev.event_type!=='ban' && ev.event_type!=='unban')
+    ? `<button class="btn btn-danger" style="padding:2px 7px;font-size:10px;" onclick="banIP('${esc(ev.ip)}','')">Ban</button>` : '';
   row.innerHTML = `
     <td class="ts">${fmtTS(ev.ts)}</td>
     <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
@@ -1031,7 +1074,8 @@ function prependLiveEvent(ev) {
     <td class="geo">${esc(ev.country||'')}</td>
     <td class="user">${esc(ev.username||'')}</td>
     <td style="color:var(--muted)">${ev.port||''}</td>
-    <td class="geo">${esc(ev.source)}</td>`;
+    <td class="geo">${esc(ev.source)}</td>
+    ${responderEnabled?`<td>${banBtn}</td>`:''}`;
   tbody.insertBefore(row, tbody.firstChild);
   while (tbody.rows.length>100) tbody.deleteRow(tbody.rows.length-1);
 }
@@ -1116,7 +1160,23 @@ function fmtDuration(s) {
 }
 
 // ── Map ────────────────────────────────────────────────────────────────────
-let leafletMap=null, topoData=null, markersLayer=null;
+let leafletMap=null, topoData=null, markersLayer=null, countriesLayer=null, meshLayer=null;
+
+function mapColors() {
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    land: cs.getPropertyValue('--map-land').trim(),
+    line: cs.getPropertyValue('--map-land-line').trim(),
+    mesh: cs.getPropertyValue('--map-mesh').trim(),
+  };
+}
+
+function restyleMap() {
+  if (!countriesLayer) return;
+  const c = mapColors();
+  countriesLayer.setStyle({fillColor:c.land, color:c.line});
+  meshLayer.setStyle({color:c.mesh});
+}
 
 function splitRing(ring) {
   const open=ring.slice(0,ring.length-1), segs=[[]];
@@ -1164,8 +1224,9 @@ async function initMap() {
   topoData = await resp.json();
   const countries = topojson.feature(topoData,topoData.objects.countries);
   countries.features = countries.features.filter(f=>f.id!=10);
-  L.geoJSON(fixAntimeridian(countries),{style:{fillColor:'#1a2035',fillOpacity:1,color:'#2d3555',weight:.4},interactive:false}).addTo(leafletMap);
-  L.geoJSON(fixAntimeridian(topojson.mesh(topoData,topoData.objects.countries,(a,b)=>a!==b)),{style:{fill:false,color:'#3a4060',weight:.5},interactive:false}).addTo(leafletMap);
+  const c = mapColors();
+  countriesLayer = L.geoJSON(fixAntimeridian(countries),{style:{fillColor:c.land,fillOpacity:1,color:c.line,weight:.4},interactive:false}).addTo(leafletMap);
+  meshLayer = L.geoJSON(fixAntimeridian(topojson.mesh(topoData,topoData.objects.countries,(a,b)=>a!==b)),{style:{fill:false,color:c.mesh,weight:.5},interactive:false}).addTo(leafletMap);
   markersLayer = L.layerGroup().addTo(leafletMap);
 }
 

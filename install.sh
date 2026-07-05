@@ -96,6 +96,30 @@ if command -v fail2ban-client &>/dev/null; then
   fi
 fi
 
+# ── fail2ban sshd jail tuning ─────────────────────────────────────────────────
+# Some images ship overly aggressive jail.local defaults (ban after a single
+# typo). Our drop-in uses jail.d/*.local, which has the highest precedence in
+# fail2ban's config order, so these values win over jail.conf AND jail.local.
+F2B_DROPIN="/etc/fail2ban/jail.d/logfort.local"
+if command -v fail2ban-client &>/dev/null && [[ ! -f "$F2B_DROPIN" ]]; then
+  ask "Apply recommended fail2ban sshd settings (ban after 3 failed attempts in 10 min, ban for 1 h)? [Y/n]"
+  read_tty ans
+  if [[ ! "$ans" =~ ^[Nn]$ ]]; then
+    mkdir -p /etc/fail2ban/jail.d
+    cat > "$F2B_DROPIN" <<'F2BEOF'
+# Managed by logfort install.sh — safe to edit or delete.
+# Ban after 3 failed attempts within 10 minutes; ban lasts 1 hour.
+[sshd]
+enabled  = true
+maxretry = 3
+findtime = 10m
+bantime  = 1h
+F2BEOF
+    systemctl restart fail2ban 2>/dev/null || service fail2ban restart 2>/dev/null || true
+    info "fail2ban sshd jail configured: 3 attempts / 10 min window / 1 h ban ($F2B_DROPIN)"
+  fi
+fi
+
 # ── backend selection ─────────────────────────────────────────────────────────
 BACKEND="file"
 JOURNALD_UNIT="ssh.service"
@@ -185,6 +209,9 @@ if [[ "$BACKEND" == "journald" ]]; then
   if [[ -n "$FAIL2BAN_LOG" ]]; then
     VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
   fi
+  # Host timezone: sshd/fail2ban write zone-less local-time timestamps; the
+  # parser interprets them in the container's local zone, which must match.
+  VOLUMES="${VOLUMES}"$'\n'"      - /etc/localtime:/etc/localtime:ro"
   VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
 
   # Detect the systemd-journal GID on this host so the container user can read
@@ -205,6 +232,9 @@ else
   if [[ -n "$FAIL2BAN_LOG" ]]; then
     VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
   fi
+  # Host timezone: sshd/fail2ban write zone-less local-time timestamps; the
+  # parser interprets them in the container's local zone, which must match.
+  VOLUMES="${VOLUMES}"$'\n'"      - /etc/localtime:/etc/localtime:ro"
   VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
 
   ENV_BLOCK="      - LOGFORT_LISTEN=0.0.0.0:8080"

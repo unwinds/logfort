@@ -82,6 +82,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - /var/log/auth.log:/host/auth.log:ro
+      - /etc/localtime:/etc/localtime:ro   # TZ хоста — время в auth.log локальное
       - ./data:/data
     environment:
       - LOGFORT_LISTEN=0.0.0.0:8080

@@ -9,6 +9,7 @@ services:
       # - /var/log/secure:/host/auth.log:ro           # RHEL/Rocky/AlmaLinux sshd log
       # - /var/log/nginx/error.log:/host/nginx_error.log:ro   # optional nginx error log
       # - /var/log/nginx/access.log:/host/nginx_access.log:ro # optional nginx access log
+      - /etc/localtime:/etc/localtime:ro              # host TZ — auth.log timestamps are local time
       - ./data:/data                                  # SQLite database + GeoIP mmdb
     environment:
       # ── Log sources ──────────────────────────────────────────────────────────

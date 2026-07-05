@@ -1,10 +1,7 @@
 package notify
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -33,22 +30,12 @@ func (w *webhookNotifier) Send(ctx context.Context, msg Message) error {
 		"country":    msg.Country,
 		"ts":         msg.TS,
 	}
-	data, err := json.Marshal(payload)
+	status, body, err := postJSON(ctx, w.client, w.url, payload)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.url, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := w.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("webhook returned HTTP %d", resp.StatusCode)
+	if status >= 400 {
+		return httpError("webhook", status, body)
 	}
 	return nil
 }

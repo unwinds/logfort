@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/unwinds/logfort/internal/config"
@@ -25,15 +26,22 @@ type Dispatcher struct {
 // New builds a Dispatcher from config. Returns nil if no notifiers or no rules
 // are configured — callers must nil-check before use.
 func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
+	// Trim config values: stray whitespace in an env var or a copy-pasted
+	// token silently breaks delivery (Telegram treats "token\n" as invalid).
+	webhookURL := strings.TrimSpace(cfg.NotifyWebhookURL)
+	tgToken := strings.TrimSpace(cfg.NotifyTelegramToken)
+	tgChat := strings.TrimSpace(cfg.NotifyTelegramChat)
+	discordURL := strings.TrimSpace(cfg.NotifyDiscordURL)
+
 	var notifiers []Notifier
-	if cfg.NotifyWebhookURL != "" {
-		notifiers = append(notifiers, NewWebhook(cfg.NotifyWebhookURL))
+	if webhookURL != "" {
+		notifiers = append(notifiers, NewWebhook(webhookURL))
 	}
-	if cfg.NotifyTelegramToken != "" && cfg.NotifyTelegramChat != "" {
-		notifiers = append(notifiers, NewTelegram(cfg.NotifyTelegramToken, cfg.NotifyTelegramChat))
+	if tgToken != "" && tgChat != "" {
+		notifiers = append(notifiers, NewTelegram(tgToken, tgChat))
 	}
-	if cfg.NotifyDiscordURL != "" {
-		notifiers = append(notifiers, NewDiscord(cfg.NotifyDiscordURL))
+	if discordURL != "" {
+		notifiers = append(notifiers, NewDiscord(discordURL))
 	}
 	if len(notifiers) == 0 {
 		return nil, nil

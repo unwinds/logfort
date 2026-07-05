@@ -1,10 +1,7 @@
 package notify
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -34,22 +31,13 @@ func (d *discordNotifier) Send(ctx context.Context, msg Message) error {
 	payload := map[string]any{
 		"embeds": []any{embed},
 	}
-	data, err := json.Marshal(payload)
+	// Success is 204 No Content (webhook execute without ?wait=true).
+	status, body, err := postJSON(ctx, d.client, d.url, payload)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("discord returned HTTP %d", resp.StatusCode)
+	if status >= 400 {
+		return httpError("discord", status, body)
 	}
 	return nil
 }

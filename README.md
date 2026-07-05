@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/unwinds/logfort/main/install.sh | s
 
 The script:
 - Detects your distro (Debian/Ubuntu/RHEL/Rocky/Alma)
-- Optionally installs Docker and fail2ban
+- Optionally installs Docker and fail2ban (with a sane sshd jail: 3 attempts / 10 min window / 1 h ban)
 - Lets you choose **file** backend (auth.log) or **journald** backend (systemd journal)
 - Auto-detects your auth log path
 - Generates a ready-to-run `docker-compose.yml`
@@ -90,6 +90,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - /var/log/auth.log:/host/auth.log:ro
+      - /etc/localtime:/etc/localtime:ro   # host TZ — auth.log timestamps are local time
       - ./data:/data
     environment:
       - LOGFORT_LISTEN=0.0.0.0:8080

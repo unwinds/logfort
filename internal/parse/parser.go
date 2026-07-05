@@ -94,20 +94,27 @@ func namedGroups(re *regexp.Regexp, s string) map[string]string {
 	return result
 }
 
+// parseTraditionalTS parses a zone-less syslog timestamp. The timestamp is
+// interpreted in the process's local timezone — syslog writes local time, and
+// treating it as UTC skews every event by the host's UTC offset. On hosts west
+// of UTC that skew made live events look like the past, which silently
+// suppressed all notifications (the dispatcher drops pre-startup events).
+// Deployments mount /etc/localtime into the container so time.Local matches
+// the host that produced the log.
 func parseTraditionalTS(ts string) (time.Time, error) {
 	now := time.Now()
-	// Normalise multiple spaces (e.g. "Jun  1" → "Jun  1")
+	// Normalise multiple spaces (e.g. "Jun  1" → "Jun 1")
 	ts = strings.Join(strings.Fields(ts), " ")
 	t, err := time.Parse("Jan 2 15:04:05", ts)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("unrecognised syslog timestamp: %q", ts)
 	}
 	// Attach current year; roll back if the result is in the future (Dec→Jan boundary).
-	t = time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC)
+	t = time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.Local)
 	if t.After(now.Add(24 * time.Hour)) {
 		t = t.AddDate(-1, 0, 0)
 	}
-	return t, nil
+	return t.UTC(), nil
 }
 
 func parseTimestamp(ts string) (time.Time, error) {
@@ -215,10 +222,12 @@ func parseNginxErrorLine(line string) (*Event, error) {
 	if m == nil {
 		return nil, ErrNoMatch
 	}
-	ts, err := time.ParseInLocation("2006/01/02 15:04:05", m["ts"], time.UTC)
+	// nginx error.log timestamps carry no zone — interpret as local time.
+	ts, err := time.ParseInLocation("2006/01/02 15:04:05", m["ts"], time.Local)
 	if err != nil {
 		return nil, ErrNoMatch
 	}
+	ts = ts.UTC()
 	for _, p := range nginxAuthPatterns {
 		pm := namedGroups(p.re, m["msg"])
 		if pm == nil {
@@ -268,10 +277,12 @@ func parseFail2BanLine(line string) (*Event, error) {
 	if tsMatch == "" {
 		return nil, ErrNoMatch
 	}
-	ts, err := time.ParseInLocation("2006-01-02 15:04:05", tsMatch, time.UTC)
+	// fail2ban logs local time without a zone — interpret as local time.
+	ts, err := time.ParseInLocation("2006-01-02 15:04:05", tsMatch, time.Local)
 	if err != nil {
 		return nil, ErrNoMatch
 	}
+	ts = ts.UTC()
 
 	m := namedGroups(fail2banPattern, line)
 	if m == nil {

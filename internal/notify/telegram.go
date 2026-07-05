@@ -1,7 +1,6 @@
 package notify
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,18 +9,22 @@ import (
 	"time"
 )
 
+const telegramAPIBase = "https://api.telegram.org"
+
 type telegramNotifier struct {
-	token  string
-	chatID string
-	client *http.Client
+	token   string
+	chatID  string
+	apiBase string
+	client  *http.Client
 }
 
 // NewTelegram returns a Notifier that sends messages via the Telegram Bot API.
 func NewTelegram(token, chatID string) Notifier {
 	return &telegramNotifier{
-		token:  token,
-		chatID: chatID,
-		client: &http.Client{Timeout: 10 * time.Second},
+		token:   token,
+		chatID:  chatID,
+		apiBase: telegramAPIBase,
+		client:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -34,23 +37,22 @@ func (t *telegramNotifier) Send(ctx context.Context, msg Message) error {
 		"text":       text,
 		"parse_mode": "HTML",
 	}
-	data, err := json.Marshal(payload)
+	status, body, err := postJSON(ctx, t.client, t.apiBase+"/bot"+t.token+"/sendMessage", payload)
 	if err != nil {
 		return err
 	}
-	url := "https://api.telegram.org/bot" + t.token + "/sendMessage"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return err
+	// Telegram always answers with {"ok":bool,...}; description carries the
+	// actionable reason ("chat not found", "bot was blocked by the user", …).
+	var tgResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("telegram returned HTTP %d", resp.StatusCode)
+	_ = json.Unmarshal(body, &tgResp)
+	if status >= 400 || !tgResp.OK {
+		if tgResp.Description != "" {
+			return fmt.Errorf("telegram returned HTTP %d: %s", status, tgResp.Description)
+		}
+		return httpError("telegram", status, body)
 	}
 	return nil
 }
