@@ -22,6 +22,7 @@ import (
 type mockStore struct {
 	bannedIPs   []string
 	unbannedIPs []string
+	saved       map[string]string // records SetSettings writes
 }
 
 func (m *mockStore) InsertEvent(_ context.Context, _ *parse.Event) error { return nil }
@@ -55,8 +56,16 @@ func (m *mockStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int
 func (m *mockStore) GetSetting(_ context.Context, _ string) (string, bool, error) {
 	return "", false, nil
 }
-func (m *mockStore) SetSetting(_ context.Context, _, _ string) error             { return nil }
-func (m *mockStore) SetSettings(_ context.Context, _ map[string]string) error    { return nil }
+func (m *mockStore) SetSetting(_ context.Context, _, _ string) error { return nil }
+func (m *mockStore) SetSettings(_ context.Context, pairs map[string]string) error {
+	if m.saved == nil {
+		m.saved = map[string]string{}
+	}
+	for k, v := range pairs {
+		m.saved[k] = v
+	}
+	return nil
+}
 func (m *mockStore) GetAllSettings(_ context.Context) (map[string]string, error) { return nil, nil }
 func (m *mockStore) Close() error                                                { return nil }
 
@@ -367,3 +376,82 @@ func TestSecurityHeaders(t *testing.T) {
 
 // avoid unused import
 var _ = time.Now
+
+// --- fail2ban settings ---
+
+func TestSettings_F2BOutOfRange(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	w := postJSON(t, srv, "/api/settings", map[string]any{"f2b_maxretry": 0})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("f2b_maxretry=0: got %d want 400", w.Code)
+	}
+	w = postJSON(t, srv, "/api/settings", map[string]any{"f2b_bantime_secs": 10})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("f2b_bantime_secs=10: got %d want 400", w.Code)
+	}
+}
+
+func TestSettings_F2BUnavailable(t *testing.T) {
+	// No F2B manager wired → applying jail settings must fail loudly with 502,
+	// not pretend to save.
+	srv, ms, _ := newTestServer(t, false)
+	w := postJSON(t, srv, "/api/settings", map[string]any{"f2b_maxretry": 5})
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("got %d want 502, body: %s", w.Code, w.Body.String())
+	}
+	if _, ok := ms.saved["f2b.maxretry"]; ok {
+		t.Error("failed apply must not persist f2b.maxretry to the DB")
+	}
+}
+
+func TestGetSettings_EnvLockedAndF2B(t *testing.T) {
+	srv, _, _ := newTestServer(t, false)
+	srv.SetEnvNotifyConfig(config.Config{NotifyTelegramToken: "env-token"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d", w.Code)
+	}
+	var resp struct {
+		EnvLocked []string       `json:"env_locked"`
+		F2B       map[string]any `json:"f2b"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, f := range resp.EnvLocked {
+		if f == "telegram_token" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("env_locked must contain telegram_token, got %v", resp.EnvLocked)
+	}
+	if resp.F2B == nil {
+		t.Fatal("f2b block missing from settings response")
+	}
+	if avail, _ := resp.F2B["available"].(bool); avail {
+		t.Error("f2b.available must be false without a manager")
+	}
+}
+
+func TestSettings_EnvPinnedFieldNotSaved(t *testing.T) {
+	srv, ms, _ := newTestServer(t, false)
+	srv.SetEnvNotifyConfig(config.Config{NotifyTelegramToken: "env-token"})
+
+	w := postJSON(t, srv, "/api/settings", map[string]any{
+		"telegram_token": "ui-token", "retention_days": 30,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, body: %s", w.Code, w.Body.String())
+	}
+	if _, ok := ms.saved["notify.telegram.token"]; ok {
+		t.Error("env-pinned telegram token must not be written to the DB")
+	}
+	if ms.saved["general.retention_days"] != "30" {
+		t.Errorf("retention_days must still be saved, got %v", ms.saved)
+	}
+}

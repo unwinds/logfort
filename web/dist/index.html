@@ -414,6 +414,9 @@
     </select>
   </div>
 
+  <!-- Log-source problem banner: shown when a source cannot be read -->
+  <div id="src-banner" style="display:none;padding:8px 20px;background:rgba(191,97,106,.14);border-bottom:1px solid rgba(191,97,106,.4);color:var(--danger);font-size:12px;line-height:1.6;flex-shrink:0;"></div>
+
   <div class="content" id="content">
 
     <!-- ── Dashboard ─────────────────────────────────────────────────────── -->
@@ -718,6 +721,41 @@
               </div>
             </div>
 
+            <!-- fail2ban jail tuning (shown when the fail2ban socket is reachable) -->
+            <div class="settings-card wide" id="fw-f2b-card" style="display:none;">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(191,97,106,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="var(--danger)"><path d="M2 2h12v2H2V2zm0 5h12v2H2V7zm0 5h12v2H2v-2z"/></svg>
+                </div>
+                <h3>fail2ban — SSH jail</h3>
+                <span class="notifier-status active" id="fw-f2b-badge">live</span>
+              </div>
+              <div class="settings-fields">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                  <div class="field-group">
+                    <label>Attempts before ban</label>
+                    <input type="number" id="fw-f2b-maxretry" min="1" max="100" step="1">
+                  </div>
+                  <div class="field-group">
+                    <label>Ban duration (hours)</label>
+                    <input type="number" id="fw-f2b-banhours" min="0.1" max="2160" step="0.5">
+                  </div>
+                  <div class="field-group">
+                    <label>Count window (minutes)</label>
+                    <input type="number" id="fw-f2b-findmin" min="1" max="10080" step="1">
+                  </div>
+                </div>
+                <span class="field-hint">Ban an IP after this many wrong passwords within the window. Values are read live from fail2ban; saving applies them immediately — no restart needed.</span>
+                <div class="field-row" style="align-items:center;gap:10px;">
+                  <button class="btn btn-primary" onclick="saveF2BSettings()" id="btn-save-f2b">Apply to fail2ban</button>
+                  <span class="settings-status" id="f2b-settings-status"></span>
+                </div>
+              </div>
+              <div class="card-note" id="fw-f2b-note">
+                Managed jail: <code id="fw-f2b-jail">sshd</code>. LogFort re-applies these values automatically if fail2ban restarts.
+              </div>
+            </div>
+
             <!-- Auto-ban -->
             <div class="settings-card wide" id="fw-autoban-card">
               <div class="settings-card-hd">
@@ -747,7 +785,7 @@
                       <option value="24h">24 hours</option>
                     </select>
                   </div>
-                  <span class="field-hint">Any IP exceeding this number of failed attempts within the window is banned automatically. Accepted logins never count toward the threshold.</span>
+                  <span class="field-hint">Any IP exceeding this number of failed password attempts within the window is banned automatically. Only real attempts count (one per wrong password) — auxiliary log lines and accepted logins never do.</span>
                 </div>
               </div>
             </div>
@@ -1044,9 +1082,22 @@ async function loadHealth() {
     responderEnabled = d.responder_enabled===true;
     const mf = document.getElementById('manual-ban-form');
     if (mf) mf.style.display = responderEnabled ? 'flex' : 'none';
+    renderSourceBanner(d.sources||[]);
   } catch {
     document.getElementById('status-dot').className = 'status-dot offline';
   }
+}
+
+// Shows a persistent banner when a log source cannot be read (bad mount,
+// permission denied) — the #1 cause of a silently empty dashboard.
+function renderSourceBanner(sources) {
+  const banner = document.getElementById('src-banner');
+  const broken = sources.filter(s => s.state === 'error');
+  if (!broken.length) { banner.style.display='none'; return; }
+  banner.innerHTML = '<b>Log source problem:</b> ' + broken.map(s =>
+    `<span style="font-family:monospace">${esc(s.target)}</span> — ${esc(s.error||'unknown error')}`
+  ).join('<br>');
+  banner.style.display = 'block';
 }
 
 // ── SSE ────────────────────────────────────────────────────────────────────
@@ -1327,6 +1378,16 @@ async function loadNotifySettings() {
     setBadge('tg-status-badge',      !!(d.telegram_token&&d.telegram_chat_id));
     setBadge('discord-status-badge', !!d.discord_url);
     setBadge('webhook-status-badge', !!d.webhook_url);
+    // Fields pinned by env vars cannot be edited at runtime — disable them
+    // instead of letting the user save changes that would be ignored.
+    const locked = d.env_locked || [];
+    lockField('tg-token',     locked.includes('telegram_token'));
+    lockField('tg-chat',      locked.includes('telegram_chat_id'));
+    lockField('discord-url',  locked.includes('discord_url'));
+    lockField('webhook-url',  locked.includes('webhook_url'));
+    const rulesLocked = locked.includes('rules');
+    ['rule-ban','rule-accepted','rule-country','rule-threshold','threshold-n','threshold-dur']
+      .forEach(id => lockField(id, rulesLocked));
     const rules = (d.rules||'').split(',').map(r=>r.trim()).filter(Boolean);
     document.getElementById('rule-ban').checked      = rules.includes('ban');
     document.getElementById('rule-accepted').checked = rules.includes('accepted_login');
@@ -1351,6 +1412,14 @@ function setBadge(id, active) {
   if (!el) return;
   el.textContent = active?'active':'inactive';
   el.className = 'notifier-status'+(active?' active':'');
+}
+
+function lockField(id, locked) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.disabled = locked;
+  el.title = locked ? 'Set by environment variable — edit docker-compose.yml to change' : '';
+  el.style.opacity = locked ? '.55' : '';
 }
 
 async function saveSettings() {
@@ -1429,7 +1498,48 @@ async function loadFirewallSettings() {
     const sel = document.getElementById('fw-autoban-window');
     if (d.autoban_window && [...sel.options].some(o=>o.value===d.autoban_window)) sel.value=d.autoban_window;
     updateFwAutoBanBadge();
+
+    // fail2ban jail card: shown only when the socket is reachable; values are
+    // what fail2ban currently enforces.
+    const f2b = d.f2b || {};
+    const card = document.getElementById('fw-f2b-card');
+    if (f2b.available) {
+      card.style.display = '';
+      document.getElementById('fw-f2b-jail').textContent = f2b.jail || 'sshd';
+      document.getElementById('fw-f2b-maxretry').value = f2b.maxretry ?? '';
+      document.getElementById('fw-f2b-banhours').value = f2b.bantime_secs ? +(f2b.bantime_secs/3600).toFixed(2) : '';
+      document.getElementById('fw-f2b-findmin').value  = f2b.findtime_secs ? Math.round(f2b.findtime_secs/60) : '';
+      const badge = document.getElementById('fw-f2b-badge');
+      badge.textContent = f2b.managed ? 'managed' : 'live';
+      badge.className = 'notifier-status active';
+    } else {
+      card.style.display = 'none';
+    }
   } catch(e) { console.error('fw settings',e); }
+}
+
+async function saveF2BSettings() {
+  const btn=document.getElementById('btn-save-f2b'), status=document.getElementById('f2b-settings-status');
+  const maxretry = parseInt(document.getElementById('fw-f2b-maxretry').value, 10);
+  const banHours = parseFloat(document.getElementById('fw-f2b-banhours').value);
+  const findMin  = parseInt(document.getElementById('fw-f2b-findmin').value, 10);
+  const body = {};
+  if (Number.isFinite(maxretry) && maxretry >= 1)  body.f2b_maxretry = maxretry;
+  if (Number.isFinite(banHours) && banHours > 0)   body.f2b_bantime_secs = Math.round(banHours*3600);
+  if (Number.isFinite(findMin) && findMin >= 1)    body.f2b_findtime_secs = findMin*60;
+  if (!Object.keys(body).length) {
+    status.textContent='✗ Enter at least one value'; status.className='settings-status err';
+    setTimeout(()=>{ status.textContent=''; },4000);
+    return;
+  }
+  btn.disabled=true;
+  try {
+    const r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error||r.status);
+    status.textContent='✓ Applied to fail2ban'; status.className='settings-status ok';
+  } catch(e) { status.textContent='✗ '+e.message; status.className='settings-status err'; }
+  finally { btn.disabled=false; setTimeout(()=>{ status.textContent=''; },6000); }
 }
 
 function updateFwAutoBanBadge() {

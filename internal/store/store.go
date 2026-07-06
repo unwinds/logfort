@@ -25,8 +25,11 @@ type Store interface {
 	BanIP(ctx context.Context, ip, source, reason string) error
 	// UnbanIP marks all active bans for an IP as inactive.
 	UnbanIP(ctx context.Context, ip string) error
-	// CountIPEvents returns the number of failed (non-ban/unban/accepted)
-	// events from ip since the given time.
+	// CountIPEvents returns the number of primary failed-attempt events
+	// (failed_password, http_auth_fail, max_auth) from ip since the given
+	// time. Auxiliary lines sshd logs around one attempt (invalid_user,
+	// pam_failure, disconnect_preauth) are excluded to keep the count equal
+	// to real attempts.
 	CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error)
 	// GetSetting returns the value for key. found is false when the key does not exist.
 	GetSetting(ctx context.Context, key string) (value string, found bool, err error)

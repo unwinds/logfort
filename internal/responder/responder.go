@@ -41,7 +41,7 @@ func New(cfg *config.Config) (Responder, *Allowlist, error) {
 		}
 		return r, al, nil
 	case "fail2ban":
-		return newFail2BanResponder(cfg.Fail2BanJail), al, nil
+		return newFail2BanResponder(cfg.Fail2BanSocket, cfg.Fail2BanJail), al, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown responder backend %q; use nftables or fail2ban", cfg.ResponderBackend)
 	}

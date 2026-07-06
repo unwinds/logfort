@@ -174,24 +174,33 @@ func TestListEvents_EmptyIsNonNil(t *testing.T) {
 	}
 }
 
-func TestCountIPEvents_ExcludesAccepted(t *testing.T) {
+func TestCountIPEvents_CountsOnlyPrimaryAttempts(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
 	now := time.Now().UTC()
-	// 3 accepted logins (legit automation) + 2 failures from the same IP.
+	// 3 accepted logins (legit automation) — never counted.
 	for i := 0; i < 3; i++ {
 		_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "accepted", now.Add(-time.Duration(i+1)*time.Minute)))
 	}
+	// One real wrong-password attempt against an unknown user produces all
+	// four of these lines; only failed_password may count, otherwise a single
+	// attempt is counted 3-4 times and thresholds fire way too early.
 	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "failed_password", now.Add(-10*time.Minute)))
-	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "invalid_user", now.Add(-11*time.Minute)))
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "invalid_user", now.Add(-10*time.Minute)))
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "pam_failure", now.Add(-10*time.Minute)))
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "disconnect_preauth", now.Add(-9*time.Minute)))
+	// A second attempt plus an nginx auth failure and a max_auth line.
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "failed_password", now.Add(-8*time.Minute)))
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "http_auth_fail", now.Add(-7*time.Minute)))
+	_ = s.InsertEvent(ctx, makeEvent("7.7.7.7", "max_auth", now.Add(-6*time.Minute)))
 
 	count, err := s.CountIPEvents(ctx, "7.7.7.7", now.Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("count: got %d, want 2 (accepted logins must not count toward thresholds)", count)
+	if count != 4 {
+		t.Errorf("count: got %d, want 4 (2 failed_password + http_auth_fail + max_auth)", count)
 	}
 }
 

@@ -5,18 +5,31 @@ services:
     ports:
       - "127.0.0.1:8080:8080"   # localhost only — do NOT expose to the internet without auth or a reverse proxy
     volumes:
-      - /var/log/auth.log:/host/auth.log:ro          # Debian/Ubuntu sshd log
-      # - /var/log/secure:/host/auth.log:ro           # RHEL/Rocky/AlmaLinux sshd log
-      # - /var/log/nginx/error.log:/host/nginx_error.log:ro   # optional nginx error log
-      # - /var/log/nginx/access.log:/host/nginx_access.log:ro # optional nginx access log
+      # Mount the /var/log DIRECTORY, not individual files: a single-file bind
+      # mount pins the inode, so after the first logrotate the container keeps
+      # reading the rotated (frozen) file and the dashboard silently goes quiet.
+      - /var/log:/host/log:ro
       - /etc/localtime:/etc/localtime:ro              # host TZ — auth.log timestamps are local time
       - ./data:/data                                  # SQLite database + GeoIP mmdb
+      # Optional: fail2ban control from the web UI (ban/unban, jail settings).
+      # The socket is root-only — also uncomment `user: "0:0"` below.
+      # - /var/run/fail2ban:/var/run/fail2ban
+
+    # The container runs as a non-root user, but auth.log is 640 root:adm
+    # (Ubuntu: syslog:adm) — add the log's group so it can be read.
+    # Find the GID with: stat -c %g /var/log/auth.log   (adm is usually 4)
+    group_add:
+      - "4"
+    # RHEL's /var/log/secure is 600 root:root — run as root instead:
+    # user: "0:0"
+
     environment:
       # ── Log sources ──────────────────────────────────────────────────────────
-      LOGFORT_LOG_PATHS: /host/auth.log
+      LOGFORT_LOG_PATHS: /host/log/auth.log
+      # RHEL/Rocky/AlmaLinux: LOGFORT_LOG_PATHS: /host/log/secure
       # Comma-separated; nginx logs are auto-detected by path keywords:
-      # LOGFORT_LOG_PATHS: /host/auth.log,/host/nginx_error.log,/host/nginx_access.log
-      # LOGFORT_FAIL2BAN_LOG: /host/fail2ban.log    # optional fail2ban log
+      # LOGFORT_LOG_PATHS: /host/log/auth.log,/host/log/nginx/error.log,/host/log/nginx/access.log
+      # LOGFORT_FAIL2BAN_LOG: /host/log/fail2ban.log    # optional fail2ban log
 
       # ── GeoIP (optional) ─────────────────────────────────────────────────────
       # Download DB-IP Lite and place it at ./data/geo.mmdb before starting.
@@ -38,7 +51,8 @@ services:
 
       # ── Active banning (disabled by default) ─────────────────────────────────
       # LOGFORT_RESPONDER_ENABLED: "true"
-      # LOGFORT_RESPONDER_BACKEND: nftables        # or fail2ban
+      # LOGFORT_RESPONDER_BACKEND: fail2ban          # or nftables
+      # LOGFORT_FAIL2BAN_JAIL: sshd
       # LOGFORT_NFT_TABLE: "inet filter"
       # LOGFORT_NFT_SET: logfort_block
       # LOGFORT_IGNORE_IPS: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"

@@ -489,13 +489,17 @@ func (s *SQLiteStore) UnbanIP(ctx context.Context, ip string) error {
 	return err
 }
 
-// CountIPEvents returns the number of suspicious (failed) events from ip since
-// the given time. Accepted logins are excluded so that legitimate automation
-// (cron over SSH, deploy keys) never counts toward auto-ban or alert thresholds.
+// CountIPEvents returns the number of actual failed authentication attempts
+// from ip since the given time. Only primary attempt events are counted:
+// sshd logs several lines per wrong password for an unknown user
+// ("Invalid user", pam_unix failure, preauth disconnect) and counting those
+// auxiliary lines would double- or triple-count a single attempt, making
+// auto-ban and threshold alerts fire far earlier than configured. Accepted
+// logins never count.
 func (s *SQLiteStore) CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type NOT IN ('ban','unban','accepted')",
+		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type IN ('failed_password','http_auth_fail','max_auth')",
 		ip, since.Unix(),
 	).Scan(&count)
 	return count, err

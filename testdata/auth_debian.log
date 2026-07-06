@@ -12,3 +12,4 @@ Jun 21 14:33:25 myhost sshd[12355]: Failed password for invalid user admin from 
 Jun 21 14:33:30 myhost CRON[9999]: (root) CMD (some cron job)
 Jun 21 14:33:31 myhost kernel: some kernel message
 Jun 21 14:33:32 myhost sudo[1234]: alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt
+Jun 21 14:35:00 myhost sshd[12360]: Failed keyboard-interactive/pam for invalid user deploy from 203.0.113.77 port 55123 ssh2

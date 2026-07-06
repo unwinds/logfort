@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/f2b"
+	"github.com/unwinds/logfort/internal/ingest"
 	"github.com/unwinds/logfort/internal/notify"
 	"github.com/unwinds/logfort/internal/parse"
 	"github.com/unwinds/logfort/internal/responder"
@@ -42,8 +45,10 @@ type Server struct {
 	notifyFn        func(*parse.Event)
 	notifyDisp      *notify.Dispatcher // tracked for Stop() on replacement
 	geoIPEnabled    bool
-	autoBanCooldown sync.Map      // IP string → time.Time; prevents duplicate bans within window
-	autoBanSem      chan struct{} // limits concurrent auto-ban background goroutines
+	f2bMgr          *f2b.Manager                 // nil when fail2ban integration is unavailable
+	sourcesFn       func() []ingest.SourceStatus // pipeline source health for /api/health
+	autoBanCooldown sync.Map                     // IP string → time.Time; prevents duplicate bans within window
+	autoBanSem      chan struct{}                // limits concurrent auto-ban background goroutines
 	shutCtx         context.Context
 	shutCancel      context.CancelFunc
 }
@@ -82,6 +87,14 @@ func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
 
 // SetGeoIPEnabled records whether a GeoIP database was successfully loaded.
 func (s *Server) SetGeoIPEnabled(v bool) { s.geoIPEnabled = v }
+
+// SetF2BManager wires the fail2ban jail manager used by the settings API.
+// Call with nil (or not at all) when fail2ban integration is unavailable.
+func (s *Server) SetF2BManager(m *f2b.Manager) { s.f2bMgr = m }
+
+// SetSourceStatusFunc wires the pipeline's per-source health snapshot into
+// /api/health.
+func (s *Server) SetSourceStatusFunc(fn func() []ingest.SourceStatus) { s.sourcesFn = fn }
 
 // SetEnvNotifyConfig records which notify fields were set by env vars.
 // Fields non-empty in c will not be overridden at runtime by POST /api/settings.
@@ -183,12 +196,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // securityHeaders adds baseline hardening headers to every response.
+// The CSP allows inline script/style because the dashboard is a single
+// self-contained HTML file; it still blocks all external origins, which is
+// the part that matters for a LAN-facing admin panel.
 func securityHeaders(h http.Handler) http.Handler {
+	const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; " +
+		"style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+		"connect-src 'self'; font-src 'self'; object-src 'none'; " +
+		"base-uri 'self'; frame-ancestors 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hdr := w.Header()
 		hdr.Set("X-Content-Type-Options", "nosniff")
 		hdr.Set("X-Frame-Options", "DENY")
 		hdr.Set("Referrer-Policy", "no-referrer")
+		hdr.Set("Content-Security-Policy", csp)
 		h.ServeHTTP(w, r)
 	})
 }
@@ -276,6 +297,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"unparsed_total":    unparsed,
 		"responder_enabled": s.cfg.ResponderEnabled,
 		"responder_backend": s.responder.Name(),
+	}
+	if s.sourcesFn != nil {
+		sources := s.sourcesFn()
+		ok := true
+		for _, src := range sources {
+			if src.State == "error" {
+				ok = false
+				break
+			}
+		}
+		resp["sources"] = sources
+		resp["sources_ok"] = ok
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -383,8 +416,8 @@ func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = cw.Write([]string{
 			time.Unix(e.TS, 0).UTC().Format(time.RFC3339),
-			e.IP, e.EventType, e.Username, userValid, e.AuthMethod,
-			port, e.Source, e.Country, e.City, lat, lon,
+			e.IP, e.EventType, csvCell(e.Username), userValid, e.AuthMethod,
+			port, e.Source, csvCell(e.Country), csvCell(e.City), lat, lon,
 		})
 	}
 	cw.Flush()
@@ -549,6 +582,12 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		EventType: "ban",
 		Source:    "manual",
 	}
+	// Record in the events feed too, so manual bans show up in the timeline
+	// alongside fail2ban's. The bans-table mirror inside InsertEvent is a
+	// no-op here (BanIP above already created the active row).
+	if err := s.store.InsertEvent(r.Context(), banEv); err != nil && !errors.Is(err, store.ErrDuplicate) {
+		slog.Warn("record manual ban event", "ip", req.IP, "err", err)
+	}
 	s.PublishEvent(banEv)
 	s.NotifyEvent(banEv)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "banned", "ip": req.IP})
@@ -586,6 +625,16 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("manual unban", "ip", req.IP, "remote", clientIP(r), "backend", s.responder.Name())
+	unbanEv := &parse.Event{
+		TS:        time.Now().UTC(),
+		IP:        req.IP,
+		EventType: "unban",
+		Source:    "manual",
+	}
+	if err := s.store.InsertEvent(r.Context(), unbanEv); err != nil && !errors.Is(err, store.ErrDuplicate) {
+		slog.Warn("record manual unban event", "ip", req.IP, "err", err)
+	}
+	s.PublishEvent(unbanEv)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unbanned", "ip": req.IP})
 }
 
@@ -601,6 +650,7 @@ func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 		"responder_enabled": s.cfg.ResponderEnabled,
 		"responder_backend": s.responder.Name(),
 		"fail2ban_jail":     s.cfg.Fail2BanJail,
+		"f2b_available":     s.f2bMgr != nil && s.f2bMgr.Available(),
 		"auth_enabled":      s.cfg.AuthEnabled,
 		"listen":            s.cfg.Listen,
 	})
@@ -619,7 +669,54 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"autoban_threshold": s.cfg.AutoBanThreshold,
 		"autoban_window":    s.cfg.AutoBanWindow,
 	}
+	storedF2B := f2b.JailSettings{
+		MaxRetry:     s.cfg.F2BMaxRetry,
+		BanTimeSecs:  s.cfg.F2BBanTime,
+		FindTimeSecs: s.cfg.F2BFindTime,
+	}
 	s.cfgMu.RUnlock()
+
+	// Fields pinned by env vars cannot be changed at runtime — tell the UI so
+	// it can disable those inputs instead of silently ignoring edits.
+	locked := []string{}
+	if s.envCfg.NotifyTelegramToken != "" {
+		locked = append(locked, "telegram_token")
+	}
+	if s.envCfg.NotifyTelegramChat != "" {
+		locked = append(locked, "telegram_chat_id")
+	}
+	if s.envCfg.NotifyDiscordURL != "" {
+		locked = append(locked, "discord_url")
+	}
+	if s.envCfg.NotifyWebhookURL != "" {
+		locked = append(locked, "webhook_url")
+	}
+	if len(s.envCfg.NotifyRules) > 0 {
+		locked = append(locked, "rules")
+	}
+	resp["env_locked"] = locked
+
+	// fail2ban jail block: live values when the server is reachable (the
+	// user should see what fail2ban actually enforces), stored values as a
+	// fallback. Socket I/O happens outside cfgMu.
+	f2bResp := map[string]any{"available": false, "jail": s.cfg.Fail2BanJail}
+	if s.f2bMgr != nil && s.f2bMgr.Available() {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		live, err := s.f2bMgr.GetJail(ctx)
+		cancel()
+		if err == nil {
+			f2bResp["available"] = true
+			f2bResp["maxretry"] = live.MaxRetry
+			f2bResp["bantime_secs"] = live.BanTimeSecs
+			f2bResp["findtime_secs"] = live.FindTimeSecs
+			f2bResp["managed"] = storedF2B.MaxRetry > 0 || storedF2B.BanTimeSecs > 0 || storedF2B.FindTimeSecs > 0
+		} else {
+			slog.Debug("f2b live read failed", "err", err)
+			f2bResp["error"] = err.Error()
+		}
+	}
+	resp["f2b"] = f2bResp
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -636,6 +733,10 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		AutoBanEnabled   *bool   `json:"autoban_enabled"`
 		AutoBanThreshold *int    `json:"autoban_threshold"`
 		AutoBanWindow    *string `json:"autoban_window"`
+		// fail2ban jail tuning (applied via the fail2ban socket)
+		F2BMaxRetry *int64 `json:"f2b_maxretry"`
+		F2BBanTime  *int64 `json:"f2b_bantime_secs"`
+		F2BFindTime *int64 `json:"f2b_findtime_secs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -688,6 +789,30 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		proposed.AutoBanWindow = *req.AutoBanWindow
 	}
 
+	// fail2ban jail fields — validate ranges up front.
+	f2bChanged := req.F2BMaxRetry != nil || req.F2BBanTime != nil || req.F2BFindTime != nil
+	if req.F2BMaxRetry != nil {
+		if *req.F2BMaxRetry < 1 || *req.F2BMaxRetry > 100 {
+			writeError(w, http.StatusBadRequest, "f2b_maxretry must be between 1 and 100")
+			return
+		}
+		proposed.F2BMaxRetry = *req.F2BMaxRetry
+	}
+	if req.F2BBanTime != nil {
+		if *req.F2BBanTime < 60 || *req.F2BBanTime > 90*24*3600 {
+			writeError(w, http.StatusBadRequest, "f2b_bantime_secs must be between 60 (1 min) and 7776000 (90 days)")
+			return
+		}
+		proposed.F2BBanTime = *req.F2BBanTime
+	}
+	if req.F2BFindTime != nil {
+		if *req.F2BFindTime < 60 || *req.F2BFindTime > 7*24*3600 {
+			writeError(w, http.StatusBadRequest, "f2b_findtime_secs must be between 60 (1 min) and 604800 (7 days)")
+			return
+		}
+		proposed.F2BFindTime = *req.F2BFindTime
+	}
+
 	// Validate notify config before touching the DB.
 	d, err := notify.New(&proposed, s.store)
 	if err != nil {
@@ -695,22 +820,58 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect all changed fields and persist atomically in a single transaction.
+	// Apply fail2ban settings to the running server BEFORE persisting, so the
+	// user gets a hard error (and no stale DB state) when fail2ban is
+	// unreachable — "saved but not applied" is exactly the confusion this
+	// feature exists to remove.
+	if f2bChanged {
+		if s.f2bMgr == nil || !s.f2bMgr.Available() {
+			d.Stop()
+			writeError(w, http.StatusBadGateway, "fail2ban is not reachable: the fail2ban socket is not mounted into the container (re-run install.sh and enable fail2ban integration)")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		applyErr := s.f2bMgr.SetJail(ctx, f2b.JailSettings{
+			MaxRetry:     valOrZero(req.F2BMaxRetry),
+			BanTimeSecs:  valOrZero(req.F2BBanTime),
+			FindTimeSecs: valOrZero(req.F2BFindTime),
+		})
+		cancel()
+		if applyErr != nil {
+			d.Stop()
+			writeError(w, http.StatusBadGateway, "failed to apply fail2ban settings: "+applyErr.Error())
+			return
+		}
+	}
+
+	// Collect all changed fields and persist atomically in a single
+	// transaction. Env-pinned notify fields are skipped: the env var wins at
+	// runtime, so writing a diverging DB value would only create a surprise
+	// when the env var is later removed.
 	toSave := make(map[string]string)
-	if req.TelegramToken != nil {
+	if req.TelegramToken != nil && s.envCfg.NotifyTelegramToken == "" {
 		toSave["notify.telegram.token"] = *req.TelegramToken
 	}
-	if req.TelegramChat != nil {
+	if req.TelegramChat != nil && s.envCfg.NotifyTelegramChat == "" {
 		toSave["notify.telegram.chat_id"] = *req.TelegramChat
 	}
-	if req.DiscordURL != nil {
+	if req.DiscordURL != nil && s.envCfg.NotifyDiscordURL == "" {
 		toSave["notify.discord.url"] = *req.DiscordURL
 	}
-	if req.WebhookURL != nil {
+	if req.WebhookURL != nil && s.envCfg.NotifyWebhookURL == "" {
 		toSave["notify.webhook.url"] = *req.WebhookURL
 	}
-	if req.Rules != nil {
+	if req.Rules != nil && len(s.envCfg.NotifyRules) == 0 {
 		toSave["notify.rules"] = *req.Rules
+	}
+	if req.F2BMaxRetry != nil {
+		toSave["f2b.maxretry"] = strconv.FormatInt(proposed.F2BMaxRetry, 10)
+	}
+	if req.F2BBanTime != nil {
+		toSave["f2b.bantime"] = strconv.FormatInt(proposed.F2BBanTime, 10)
+	}
+	if req.F2BFindTime != nil {
+		toSave["f2b.findtime"] = strconv.FormatInt(proposed.F2BFindTime, 10)
 	}
 	if req.RetentionDays != nil {
 		toSave["general.retention_days"] = strconv.Itoa(proposed.RetentionDays)
@@ -747,6 +908,9 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.AutoBanEnabled = proposed.AutoBanEnabled
 	s.cfg.AutoBanThreshold = proposed.AutoBanThreshold
 	s.cfg.AutoBanWindow = proposed.AutoBanWindow
+	s.cfg.F2BMaxRetry = proposed.F2BMaxRetry
+	s.cfg.F2BBanTime = proposed.F2BBanTime
+	s.cfg.F2BFindTime = proposed.F2BFindTime
 	s.cfgMu.Unlock()
 
 	// Swap dispatcher only if notify fields were included in this request.
@@ -806,9 +970,12 @@ func (s *Server) AutoBanEvent(ev *parse.Event) {
 	if !enabled || !responderEnabled {
 		return
 	}
-	// Only react to auth-failure events, not to bans/unbans/accepted logins.
+	// Only react to primary attempt events — the same set CountIPEvents
+	// counts. Auxiliary lines (invalid_user, pam_failure, disconnect_preauth)
+	// would trigger redundant threshold checks for the same attempt.
 	switch ev.EventType {
-	case "ban", "unban", "accepted":
+	case "failed_password", "http_auth_fail", "max_auth":
+	default:
 		return
 	}
 
@@ -892,6 +1059,9 @@ func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, 
 		EventType: "ban",
 		Source:    "auto-ban",
 	}
+	if err := s.store.InsertEvent(ctx, banEv); err != nil && !errors.Is(err, store.ErrDuplicate) {
+		slog.Warn("record auto-ban event", "ip", ip, "err", err)
+	}
 	s.PublishEvent(banEv)
 	s.NotifyEvent(banEv)
 }
@@ -908,6 +1078,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// csvCell neutralises spreadsheet formula injection: attacker-controlled
+// values (SSH usernames) that start with =, +, -, @ or a control character
+// would otherwise execute as formulas when the export is opened in Excel.
+func csvCell(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
+}
+
+func valOrZero(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func parseIntQuery(r *http.Request, key string, def int) int {

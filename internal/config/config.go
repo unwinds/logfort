@@ -34,6 +34,7 @@ type Config struct {
 	NftTable            string
 	NftSet              string
 	Fail2BanJail        string
+	Fail2BanSocket      string
 	IgnoreIPs           []string
 	NotifyWebhookURL    string
 	NotifyTelegramToken string
@@ -46,6 +47,12 @@ type Config struct {
 	AutoBanEnabled   bool
 	AutoBanThreshold int
 	AutoBanWindow    string
+
+	// fail2ban jail tuning managed from the UI (persisted in DB; 0 = not
+	// managed). Applied to the running fail2ban via its command socket.
+	F2BMaxRetry int64
+	F2BBanTime  int64 // seconds
+	F2BFindTime int64 // seconds
 }
 
 // Load reads configuration from environment variables with sane defaults.
@@ -60,6 +67,7 @@ func Load() (*Config, error) {
 		NftTable:            getEnv("LOGFORT_NFT_TABLE", "inet filter"),
 		NftSet:              getEnv("LOGFORT_NFT_SET", "logfort_block"),
 		Fail2BanJail:        getEnv("LOGFORT_FAIL2BAN_JAIL", "sshd"),
+		Fail2BanSocket:      getEnv("LOGFORT_FAIL2BAN_SOCKET", "/var/run/fail2ban/fail2ban.sock"),
 		NotifyWebhookURL:    getEnv("LOGFORT_NOTIFY_WEBHOOK_URL", ""),
 		NotifyTelegramToken: getEnv("LOGFORT_NOTIFY_TELEGRAM_TOKEN", ""),
 		NotifyTelegramChat:  getEnv("LOGFORT_NOTIFY_TELEGRAM_CHAT_ID", ""),
@@ -103,7 +111,7 @@ func Load() (*Config, error) {
 	}
 
 	// Auth
-	cfg.AuthEnabled = getEnv("LOGFORT_AUTH_ENABLED", "false") == "true"
+	cfg.AuthEnabled = getEnvBool("LOGFORT_AUTH_ENABLED", false)
 	cfg.AuthUser = getEnv("LOGFORT_AUTH_USER", "")
 	cfg.AuthPass = getEnv("LOGFORT_AUTH_PASS", "")
 	if cfg.AuthEnabled && (cfg.AuthUser == "" || cfg.AuthPass == "") {
@@ -111,7 +119,7 @@ func Load() (*Config, error) {
 	}
 
 	// Responder
-	cfg.ResponderEnabled = getEnv("LOGFORT_RESPONDER_ENABLED", "false") == "true"
+	cfg.ResponderEnabled = getEnvBool("LOGFORT_RESPONDER_ENABLED", false)
 	cfg.ResponderBackend = getEnv("LOGFORT_RESPONDER_BACKEND", "nftables")
 
 	// Ignore IPs
@@ -199,6 +207,23 @@ func (c *Config) OverlaySettings(s map[string]string) {
 	if c.AutoBanWindow == "" {
 		c.AutoBanWindow = DefaultAutoBanWindow
 	}
+
+	// fail2ban jail tuning — purely UI-controlled, always overlay from DB.
+	if v := s["f2b.maxretry"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			c.F2BMaxRetry = n
+		}
+	}
+	if v := s["f2b.bantime"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			c.F2BBanTime = n
+		}
+	}
+	if v := s["f2b.findtime"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			c.F2BFindTime = n
+		}
+	}
 }
 
 func getEnv(key, def string) string {
@@ -206,4 +231,18 @@ func getEnv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// getEnvBool parses a boolean env var, accepting the usual spellings
+// (true/1/T/TRUE …). Unset or unparsable values return def.
+func getEnvBool(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	b, err := strconv.ParseBool(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return b
 }

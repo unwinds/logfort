@@ -14,6 +14,7 @@ import (
 
 	"github.com/unwinds/logfort/internal/api"
 	"github.com/unwinds/logfort/internal/config"
+	"github.com/unwinds/logfort/internal/f2b"
 	"github.com/unwinds/logfort/internal/geo"
 	"github.com/unwinds/logfort/internal/ingest"
 	"github.com/unwinds/logfort/internal/notify"
@@ -127,7 +128,17 @@ func main() {
 	srv.SetGeoIPEnabled(geoIPLoaded)
 	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
+	srv.SetSourceStatusFunc(pipeline.SourceStatuses)
 	srv.SetDispatcher(dispatcher) // nil-safe; wires Dispatcher.Notify and enables Stop() on swap
+
+	// fail2ban jail manager: powers the Firewall settings tab (maxretry /
+	// bantime editable from the UI) whenever the fail2ban socket is mounted
+	// or fail2ban-client is available.
+	f2bMgr := f2b.NewManager(cfg.Fail2BanSocket, cfg.Fail2BanJail)
+	if f2bMgr.Available() {
+		srv.SetF2BManager(f2bMgr)
+		slog.Info("fail2ban integration available", "socket", cfg.Fail2BanSocket, "jail", cfg.Fail2BanJail)
+	}
 	pipeline.SetPublishHook(func(ev *parse.Event) {
 		srv.PublishEvent(ev)
 		srv.NotifyEvent(ev)  // uses current dispatcher, swappable via settings API
@@ -164,6 +175,13 @@ func main() {
 	// Start retention cleanup goroutine — reads current retention_days from DB on each tick
 	// so that changes made via the settings UI take effect without a restart.
 	go runRetention(ctx, st, cfg.RetentionDays)
+
+	// Re-apply UI-managed fail2ban jail settings. `set <jail> …` socket
+	// commands are runtime-only and vanish when fail2ban restarts, so the
+	// stored values are enforced at startup and refreshed periodically.
+	if f2bMgr.Available() {
+		go runF2BEnforce(ctx, st, f2bMgr)
+	}
 
 	// Re-apply active bans to the firewall. nftables sets live in kernel
 	// memory and are empty after a host reboot, while the DB still lists the
@@ -212,6 +230,73 @@ func reconcileBans(ctx context.Context, st store.Store, resp responder.Responder
 	}
 	if applied > 0 {
 		slog.Info("re-applied active bans to firewall", "count", applied)
+	}
+}
+
+// runF2BEnforce keeps the running fail2ban jail in sync with the UI-managed
+// settings stored in the DB. Reads fresh values on every tick so UI changes
+// are picked up, and re-applies them every 10 minutes because a fail2ban
+// restart silently reverts runtime `set` commands to the jail.d file values.
+func runF2BEnforce(ctx context.Context, st store.Store, mgr *f2b.Manager) {
+	apply := func() {
+		desired := f2b.JailSettings{}
+		if v, ok, err := st.GetSetting(ctx, "f2b.maxretry"); err == nil && ok {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				desired.MaxRetry = n
+			}
+		}
+		if v, ok, err := st.GetSetting(ctx, "f2b.bantime"); err == nil && ok {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				desired.BanTimeSecs = n
+			}
+		}
+		if v, ok, err := st.GetSetting(ctx, "f2b.findtime"); err == nil && ok {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				desired.FindTimeSecs = n
+			}
+		}
+		if desired == (f2b.JailSettings{}) {
+			return // never configured from the UI — leave fail2ban alone
+		}
+		applyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if live, err := mgr.GetJail(applyCtx); err == nil {
+			match := (desired.MaxRetry == 0 || live.MaxRetry == desired.MaxRetry) &&
+				(desired.BanTimeSecs == 0 || live.BanTimeSecs == desired.BanTimeSecs) &&
+				(desired.FindTimeSecs == 0 || live.FindTimeSecs == desired.FindTimeSecs)
+			if match {
+				return
+			}
+		}
+		if err := mgr.SetJail(applyCtx, desired); err != nil {
+			slog.Warn("fail2ban settings enforcement failed", "err", err)
+			return
+		}
+		slog.Info("re-applied fail2ban jail settings",
+			"jail", mgr.Jail(), "maxretry", desired.MaxRetry,
+			"bantime_s", desired.BanTimeSecs, "findtime_s", desired.FindTimeSecs)
+	}
+
+	// Initial apply with a few quick retries: at container start fail2ban may
+	// still be booting on the host.
+	for _, delay := range []time.Duration{0, 15 * time.Second, 45 * time.Second} {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		apply()
+	}
+
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			apply()
+		}
 	}
 }
 

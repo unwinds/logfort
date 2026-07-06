@@ -16,6 +16,10 @@ import (
 // fakeSource sends a fixed set of lines then exits (no blocking).
 type fakeSource struct{ lines []string }
 
+func (f *fakeSource) Info() ingest.SourceInfo {
+	return ingest.SourceInfo{Kind: "fake", Target: "test"}
+}
+
 func (f *fakeSource) Start(ctx context.Context, out chan<- string) error {
 	for _, l := range f.lines {
 		select {

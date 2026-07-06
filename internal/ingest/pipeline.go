@@ -24,15 +24,23 @@ type Pipeline struct {
 
 	parsed   atomic.Int64
 	unparsed atomic.Int64
+
+	statusMu sync.Mutex
+	statuses []SourceStatus // index-aligned with sources
 }
 
 // NewPipeline creates a Pipeline with the given sources and dependencies.
 func NewPipeline(sources []Source, parseFunc func(string) (*parse.Event, error), st store.Store) *Pipeline {
+	statuses := make([]SourceStatus, len(sources))
+	for i, s := range sources {
+		statuses[i] = SourceStatus{SourceInfo: s.Info(), State: "starting"}
+	}
 	return &Pipeline{
 		sources:   sources,
 		parseFunc: parseFunc,
 		store:     st,
 		workers:   4,
+		statuses:  statuses,
 	}
 }
 
@@ -49,23 +57,41 @@ func (p *Pipeline) Counters() (parsed, unparsed int64) {
 	return p.parsed.Load(), p.unparsed.Load()
 }
 
+// SourceStatuses returns a snapshot of every source's health for /api/health.
+func (p *Pipeline) SourceStatuses() []SourceStatus {
+	p.statusMu.Lock()
+	defer p.statusMu.Unlock()
+	out := make([]SourceStatus, len(p.statuses))
+	copy(out, p.statuses)
+	return out
+}
+
+func (p *Pipeline) setStatus(i int, state, errMsg string) {
+	p.statusMu.Lock()
+	p.statuses[i].State = state
+	p.statuses[i].Error = errMsg
+	p.statusMu.Unlock()
+}
+
 // Run starts all sources and the worker pool. It blocks until ctx is done.
 func (p *Pipeline) Run(ctx context.Context) error {
 	lines := make(chan string, 1000)
 
 	// Start all sources concurrently; close lines when all are done.
 	var srcWg sync.WaitGroup
-	for _, src := range p.sources {
+	for i, src := range p.sources {
 		srcWg.Add(1)
-		s := src
+		i, s := i, src
 		go func() {
 			defer srcWg.Done()
 			backoff := time.Second
 			for {
+				p.setStatus(i, "running", "")
 				err := s.Start(ctx, lines)
 				if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
 					return
 				}
+				p.setStatus(i, "error", err.Error())
 				slog.Error("source error, retrying", "err", err, "backoff", backoff)
 				select {
 				case <-ctx.Done():

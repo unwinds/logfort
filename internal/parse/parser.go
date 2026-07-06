@@ -27,11 +27,13 @@ type eventPattern struct {
 var sshdPatterns = []eventPattern{
 	{
 		typ: "accepted",
-		re:  regexp.MustCompile(`^Accepted (?P<method>password|publickey) for (?P<user>\S+) from (?P<ip>[0-9a-fA-F:.]+) port (?P<port>\d+) ssh2`),
+		re:  regexp.MustCompile(`^Accepted (?P<method>password|publickey|keyboard-interactive/pam|keyboard-interactive) for (?P<user>\S+) from (?P<ip>[0-9a-fA-F:.]+) port (?P<port>\d+) ssh2`),
 	},
 	{
+		// One line per wrong password. keyboard-interactive/pam is what sshd
+		// logs when PAM handles the prompt (kbd-interactive auth enabled).
 		typ: "failed_password",
-		re:  regexp.MustCompile(`^Failed password for (?P<invalid>invalid user )?(?P<user>.+?) from (?P<ip>[0-9a-fA-F:.]+) port (?P<port>\d+) ssh2`),
+		re:  regexp.MustCompile(`^Failed (?:password|keyboard-interactive/pam|keyboard-interactive) for (?P<invalid>invalid user )?(?P<user>.+?) from (?P<ip>[0-9a-fA-F:.]+) port (?P<port>\d+) ssh2`),
 	},
 	{
 		typ: "invalid_user",

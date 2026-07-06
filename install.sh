@@ -97,26 +97,91 @@ if command -v fail2ban-client &>/dev/null; then
 fi
 
 # ── fail2ban sshd jail tuning ─────────────────────────────────────────────────
-# Some images ship overly aggressive jail.local defaults (ban after a single
-# typo). Our drop-in uses jail.d/*.local, which has the highest precedence in
-# fail2ban's config order, so these values win over jail.conf AND jail.local.
+# The stock sshd filter matches auxiliary log lines too ("Invalid user X",
+# pam_unix failures) — for an unknown username every wrong password produces
+# TWO or more matches, so maxretry=3 bans after just 2 real attempts. The
+# logfort-sshd filter below counts only "Failed password/keyboard-interactive"
+# lines: exactly one per wrong password, so maxretry means what it says.
 F2B_DROPIN="/etc/fail2ban/jail.d/logfort.local"
-if command -v fail2ban-client &>/dev/null && [[ ! -f "$F2B_DROPIN" ]]; then
-  ask "Apply recommended fail2ban sshd settings (ban after 3 failed attempts in 10 min, ban for 1 h)? [Y/n]"
+F2B_FILTER="/etc/fail2ban/filter.d/logfort-sshd.conf"
+F2B_MAXRETRY=3
+F2B_BANHOURS=1
+if command -v fail2ban-client &>/dev/null; then
+  [[ -f "$F2B_DROPIN" ]] && info "existing logfort fail2ban drop-in found — it will be updated."
+  ask "Configure the fail2ban sshd jail (exact attempt counting; recommended)? [Y/n]"
   read_tty ans
   if [[ ! "$ans" =~ ^[Nn]$ ]]; then
-    mkdir -p /etc/fail2ban/jail.d
-    cat > "$F2B_DROPIN" <<'F2BEOF'
+    ask "Failed password attempts before ban [${F2B_MAXRETRY}]:"
+    read_tty v
+    if [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1 && v <= 99 )); then F2B_MAXRETRY="$v";
+    elif [[ -n "$v" ]]; then warn "invalid value '$v' — keeping ${F2B_MAXRETRY}"; fi
+    ask "Ban duration in hours [${F2B_BANHOURS}]:"
+    read_tty v
+    if [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1 && v <= 720 )); then F2B_BANHOURS="$v";
+    elif [[ -n "$v" ]]; then warn "invalid value '$v' — keeping ${F2B_BANHOURS}"; fi
+
+    mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+    cat > "$F2B_FILTER" <<'F2BFILTER'
 # Managed by logfort install.sh — safe to edit or delete.
-# Ban after 3 failed attempts within 10 minutes; ban lasts 1 hour.
+# Counts ONLY actual failed authentication attempts: sshd logs exactly one
+# "Failed password" / "Failed keyboard-interactive" line per wrong password.
+# The stock sshd filter additionally matches "Invalid user …" and pam_unix
+# lines, which double-counts attempts against unknown usernames and makes
+# bans fire earlier than maxretry suggests.
+[INCLUDES]
+before = common.conf
+
+[Definition]
+_daemon = sshd(?:-session)?
+
+failregex = ^%(__prefix_line)sFailed (?:password|keyboard-interactive(?:/pam)?) for (?:invalid user )?.* from <HOST>( port \d+)?( ssh\d*)?\s*$
+
+ignoreregex =
+
+[Init]
+journalmatch = _SYSTEMD_UNIT=sshd.service + _SYSTEMD_UNIT=ssh.service + _COMM=sshd + _COMM=sshd-session
+F2BFILTER
+
+    cat > "$F2B_DROPIN" <<F2BJAIL
+# Managed by logfort install.sh — safe to edit or delete.
+# Uses the logfort-sshd filter so maxretry counts real password attempts.
 [sshd]
 enabled  = true
-maxretry = 3
+filter   = logfort-sshd
+maxretry = ${F2B_MAXRETRY}
 findtime = 10m
-bantime  = 1h
-F2BEOF
+bantime  = ${F2B_BANHOURS}h
+F2BJAIL
+
     systemctl restart fail2ban 2>/dev/null || service fail2ban restart 2>/dev/null || true
-    info "fail2ban sshd jail configured: 3 attempts / 10 min window / 1 h ban ($F2B_DROPIN)"
+    sleep 2
+    # Verify the settings actually took effect — a config typo would leave
+    # fail2ban dead and the host unprotected.
+    if fail2ban-client ping &>/dev/null; then
+      EFF_RETRY=$(fail2ban-client get sshd maxretry 2>/dev/null | tr -d '[:space:]' || echo "?")
+      EFF_BAN=$(fail2ban-client get sshd bantime 2>/dev/null | tr -d '[:space:]' || echo "?")
+      if [[ "$EFF_RETRY" == "$F2B_MAXRETRY" ]]; then
+        info "fail2ban sshd jail verified: ${EFF_RETRY} attempts / 10 min window / ${EFF_BAN}s ban"
+      else
+        warn "fail2ban is running but sshd jail reports maxretry=${EFF_RETRY} (expected ${F2B_MAXRETRY}) — check: fail2ban-client status sshd"
+      fi
+    else
+      warn "fail2ban did not come back up after restart! Check: journalctl -u fail2ban -n 30"
+    fi
+  fi
+fi
+
+# ── fail2ban control from the web UI ──────────────────────────────────────────
+# Mounting fail2ban's command socket lets LogFort ban/unban IPs and edit the
+# jail's maxretry/bantime from the Settings → Firewall tab. The socket is
+# root-only, so the container must run as root when this is enabled.
+F2B_CONTROL=false
+if command -v fail2ban-client &>/dev/null; then
+  ask "Manage fail2ban from the LogFort web UI (ban/unban IPs, change attempts/ban duration)? [Y/n]"
+  read_tty ans
+  if [[ ! "$ans" =~ ^[Nn]$ ]]; then
+    F2B_CONTROL=true
+    info "web UI fail2ban control enabled (container will run as root to reach /var/run/fail2ban)"
   fi
 fi
 
@@ -171,6 +236,46 @@ if [[ "$BACKEND" == "file" ]]; then
   info "auth log: $AUTH_LOG"
 fi
 
+# ── container access to log files ─────────────────────────────────────────────
+# /var/log is mounted as a DIRECTORY, not per-file: bind-mounting a single
+# file pins its inode, so after the first logrotate the container keeps
+# reading the rotated (frozen) file and the dashboard silently goes quiet.
+#
+# The container runs as a non-root user, while auth.log is typically
+# 640 root:adm (Ubuntu: syslog:adm) — without extra groups the container gets
+# "permission denied" and, again, a silently empty dashboard. group_add with
+# the log's group fixes Debian/Ubuntu; RHEL's /var/log/secure is 600 root:root
+# and needs the root fallback.
+RUN_AS_ROOT=false
+GROUP_ADD_GIDS=()
+$F2B_CONTROL && RUN_AS_ROOT=true
+
+add_log_group() {
+  local file="$1" perm gid
+  [[ -f "$file" ]] || return 0
+  perm=$(stat -c %a "$file" 2>/dev/null) || return 0
+  gid=$(stat -c %g "$file" 2>/dev/null) || return 0
+  # group-read bit = second-to-last octal digit >= 4
+  if [[ "${perm:${#perm}-2:1}" -ge 4 ]]; then
+    local g
+    for g in "${GROUP_ADD_GIDS[@]:-}"; do [[ "$g" == "$gid" ]] && return 0; done
+    GROUP_ADD_GIDS+=("$gid")
+  else
+    warn "$file is not group-readable (mode $perm) — the container will run as root to read it."
+    RUN_AS_ROOT=true
+  fi
+}
+
+if ! $RUN_AS_ROOT; then
+  [[ "$BACKEND" == "file" ]] && add_log_group "$AUTH_LOG"
+  [[ -n "$FAIL2BAN_LOG" ]] && add_log_group "$FAIL2BAN_LOG"
+fi
+
+if [[ "$BACKEND" == "journald" ]] && ! $RUN_AS_ROOT; then
+  JOURNAL_GID=$(getent group systemd-journal 2>/dev/null | cut -d: -f3 || echo "")
+  [[ -n "$JOURNAL_GID" ]] && GROUP_ADD_GIDS+=("$JOURNAL_GID")
+fi
+
 # ── optional home coordinates ─────────────────────────────────────────────────
 HOME_LAT=""
 HOME_LON=""
@@ -185,7 +290,13 @@ fi
 LISTEN_PORT=8080
 ask "Dashboard port [8080]:"
 read_tty input_port
-[[ -n "$input_port" ]] && LISTEN_PORT="$input_port"
+if [[ -n "$input_port" ]]; then
+  if [[ "$input_port" =~ ^[0-9]+$ ]] && (( input_port >= 1 && input_port <= 65535 )); then
+    LISTEN_PORT="$input_port"
+  else
+    warn "invalid port '$input_port' — keeping 8080"
+  fi
+fi
 
 # ── prepare install dir ───────────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR/data"
@@ -195,7 +306,24 @@ info "install directory: $INSTALL_DIR"
 # ── generate docker-compose.yml ───────────────────────────────────────────────
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 
-# Build volumes and env blocks depending on backend.
+# container_log_path <path> → path of the file as seen inside the container.
+container_log_path() {
+  case "$1" in
+    /var/log/*) echo "/host/log/${1#/var/log/}" ;;
+    *)          echo "/host/$(basename "$1")" ;;
+  esac
+}
+
+VAR_LOG_MOUNTED=false
+[[ "$BACKEND" == "file" && "$AUTH_LOG" == /var/log/* ]] && VAR_LOG_MOUNTED=true
+[[ -n "$FAIL2BAN_LOG" && "$FAIL2BAN_LOG" == /var/log/* ]] && VAR_LOG_MOUNTED=true
+
+NL=$'\n'
+VOLUMES=""
+ENV_BLOCK="      - LOGFORT_LISTEN=0.0.0.0:8080"
+ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
+ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
+
 if [[ "$BACKEND" == "journald" ]]; then
   # Mount host journal files and the systemd journal socket so that journalctl
   # inside the container can read and follow the host journal.
@@ -206,55 +334,57 @@ if [[ "$BACKEND" == "journald" ]]; then
   VOLUMES="${VOLUMES}"$'\n'"      - /var/log/journal:/var/log/journal:ro"
   VOLUMES="${VOLUMES}"$'\n'"      - /run/systemd/journal:/run/systemd/journal:ro"
   VOLUMES="${VOLUMES}"$'\n'"      - /etc/machine-id:/etc/machine-id:ro"
-  if [[ -n "$FAIL2BAN_LOG" ]]; then
-    VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
-  fi
-  # Host timezone: sshd/fail2ban write zone-less local-time timestamps; the
-  # parser interprets them in the container's local zone, which must match.
-  VOLUMES="${VOLUMES}"$'\n'"      - /etc/localtime:/etc/localtime:ro"
-  VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
-
-  # Detect the systemd-journal GID on this host so the container user can read
-  # journal files (which are group-readable by systemd-journal).
-  JOURNAL_GID=$(getent group systemd-journal 2>/dev/null | cut -d: -f3 || echo "")
-
-  ENV_BLOCK="      - LOGFORT_LISTEN=0.0.0.0:8080"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_BACKEND=journald"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_JOURNALD_UNIT=${JOURNALD_UNIT}"
-  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
-  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
-  if [[ -n "$FAIL2BAN_LOG" ]]; then
-    ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_FAIL2BAN_LOG=/host/fail2ban.log"
-  fi
 else
-  VOLUMES="      - ${AUTH_LOG}:/host/auth.log:ro"
-  LOG_PATHS="/host/auth.log"
-  if [[ -n "$FAIL2BAN_LOG" ]]; then
-    VOLUMES="${VOLUMES}"$'\n'"      - ${FAIL2BAN_LOG}:/host/fail2ban.log:ro"
-  fi
-  # Host timezone: sshd/fail2ban write zone-less local-time timestamps; the
-  # parser interprets them in the container's local zone, which must match.
-  VOLUMES="${VOLUMES}"$'\n'"      - /etc/localtime:/etc/localtime:ro"
-  VOLUMES="${VOLUMES}"$'\n'"      - ./data:/data"
-
-  ENV_BLOCK="      - LOGFORT_LISTEN=0.0.0.0:8080"
-  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_LOG_PATHS=${LOG_PATHS}"
-  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_DB_PATH=/data/logfort.db"
-  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_GEOIP_DB=/data/geo.mmdb"
-  if [[ -n "$FAIL2BAN_LOG" ]]; then
-    ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_FAIL2BAN_LOG=/host/fail2ban.log"
-  fi
+  AUTH_LOG_IN_CONTAINER=$(container_log_path "$AUTH_LOG")
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_LOG_PATHS=${AUTH_LOG_IN_CONTAINER}"
 fi
+
+if [[ -n "$FAIL2BAN_LOG" ]]; then
+  F2B_LOG_IN_CONTAINER=$(container_log_path "$FAIL2BAN_LOG")
+  ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_FAIL2BAN_LOG=${F2B_LOG_IN_CONTAINER}"
+fi
+
+# One /var/log directory mount covers auth.log + fail2ban.log and survives
+# logrotate; files outside /var/log are mounted individually (with a warning).
+if $VAR_LOG_MOUNTED; then
+  VOLUMES="${VOLUMES:+${VOLUMES}${NL}}      - /var/log:/host/log:ro"
+fi
+if [[ "$BACKEND" == "file" && "$AUTH_LOG" != /var/log/* ]]; then
+  warn "auth log is outside /var/log — mounting the file directly. Log rotation will break ingestion until the container restarts."
+  VOLUMES="${VOLUMES:+${VOLUMES}${NL}}      - ${AUTH_LOG}:${AUTH_LOG_IN_CONTAINER}:ro"
+fi
+if [[ -n "$FAIL2BAN_LOG" && "$FAIL2BAN_LOG" != /var/log/* ]]; then
+  VOLUMES="${VOLUMES:+${VOLUMES}${NL}}      - ${FAIL2BAN_LOG}:${F2B_LOG_IN_CONTAINER}:ro"
+fi
+
+if $F2B_CONTROL; then
+  VOLUMES="${VOLUMES:+${VOLUMES}${NL}}      - /var/run/fail2ban:/var/run/fail2ban"
+  ENV_BLOCK="${ENV_BLOCK}${NL}      - LOGFORT_RESPONDER_ENABLED=true"
+  ENV_BLOCK="${ENV_BLOCK}${NL}      - LOGFORT_RESPONDER_BACKEND=fail2ban"
+  ENV_BLOCK="${ENV_BLOCK}${NL}      - LOGFORT_FAIL2BAN_JAIL=sshd"
+fi
+
+# Host timezone: sshd/fail2ban write zone-less local-time timestamps; the
+# parser interprets them in the container's local zone, which must match.
+VOLUMES="${VOLUMES:+${VOLUMES}${NL}}      - /etc/localtime:/etc/localtime:ro"
+VOLUMES="${VOLUMES}${NL}      - ./data:/data"
 
 if [[ -n "$HOME_LAT" ]] && [[ -n "$HOME_LON" ]]; then
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_HOME_LAT=${HOME_LAT}"
   ENV_BLOCK="${ENV_BLOCK}"$'\n'"      - LOGFORT_HOME_LON=${HOME_LON}"
 fi
 
-# Build optional group_add block for journald GID.
+USER_LINE=""
 GROUP_ADD_BLOCK=""
-if [[ "$BACKEND" == "journald" ]] && [[ -n "${JOURNAL_GID:-}" ]]; then
-  GROUP_ADD_BLOCK=$'    group_add:\n'"      - \"${JOURNAL_GID}\""
+if $RUN_AS_ROOT; then
+  USER_LINE='    user: "0:0"'
+elif [[ ${#GROUP_ADD_GIDS[@]} -gt 0 ]]; then
+  GROUP_ADD_BLOCK="    group_add:"
+  for gid in "${GROUP_ADD_GIDS[@]}"; do
+    GROUP_ADD_BLOCK="${GROUP_ADD_BLOCK}"$'\n'"      - \"${gid}\""
+  done
 fi
 
 {
@@ -264,6 +394,9 @@ fi
   echo "    image: ${LOGFORT_IMAGE}"
   echo "    container_name: logfort"
   echo "    restart: unless-stopped"
+  if [[ -n "$USER_LINE" ]]; then
+    echo "$USER_LINE"
+  fi
   echo "    ports:"
   echo "      - \"127.0.0.1:${LISTEN_PORT}:8080\""
   echo "    volumes:"
@@ -281,17 +414,26 @@ info "docker-compose.yml written to $COMPOSE_FILE"
 ask "Download free GeoIP database for the attack map? (DB-IP Lite, CC BY 4.0) [Y/n]"
 read_tty ans
 if [[ ! "$ans" =~ ^[Nn]$ ]]; then
-  YEAR_MONTH=$(date +%Y-%m)
-  GEOIP_URL="https://download.db-ip.com/free/dbip-city-lite-${YEAR_MONTH}.mmdb.gz"
   GEOIP_TMP=$(mktemp "$INSTALL_DIR/data/geo.mmdb.XXXXXX")
-  info "Downloading DB-IP Lite ${YEAR_MONTH}…"
-  if curl -fsSL "$GEOIP_URL" | gunzip > "$GEOIP_TMP" && mv "$GEOIP_TMP" "$INSTALL_DIR/data/geo.mmdb"; then
-    chmod 644 "$INSTALL_DIR/data/geo.mmdb"
-    info "GeoIP database saved to $INSTALL_DIR/data/geo.mmdb"
-  else
+  GEOIP_OK=false
+  # Current month's file appears a few days into the month — fall back to the
+  # previous month when the fresh one is not published yet.
+  for YM in "$(date +%Y-%m)" "$(date -d "-1 month" +%Y-%m 2>/dev/null || date -v-1m +%Y-%m 2>/dev/null)"; do
+    [[ -z "$YM" ]] && continue
+    GEOIP_URL="https://download.db-ip.com/free/dbip-city-lite-${YM}.mmdb.gz"
+    info "Downloading DB-IP Lite ${YM}…"
+    if curl -fsSL "$GEOIP_URL" | gunzip > "$GEOIP_TMP" 2>/dev/null && [[ -s "$GEOIP_TMP" ]]; then
+      mv "$GEOIP_TMP" "$INSTALL_DIR/data/geo.mmdb"
+      chmod 644 "$INSTALL_DIR/data/geo.mmdb"
+      info "GeoIP database saved to $INSTALL_DIR/data/geo.mmdb"
+      GEOIP_OK=true
+      break
+    fi
+  done
+  if ! $GEOIP_OK; then
     rm -f "$GEOIP_TMP"
     warn "GeoIP download failed — you can download it later:"
-    warn "  curl -fsSL \"$GEOIP_URL\" | gunzip > $INSTALL_DIR/data/geo.mmdb"
+    warn "  curl -fsSL \"https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz\" | gunzip > $INSTALL_DIR/data/geo.mmdb"
   fi
 fi
 
@@ -303,6 +445,7 @@ if [[ ! "$ans" =~ ^[Nn]$ ]]; then
   docker compose -f "$COMPOSE_FILE" up -d
   info "logfort is running on http://127.0.0.1:${LISTEN_PORT}"
   info "Tip: access via SSH tunnel: ssh -L ${LISTEN_PORT}:127.0.0.1:${LISTEN_PORT} user@yourserver"
+  info "If the dashboard stays empty, check log access: docker logs logfort | grep -i 'source error'"
 else
   info "Start later with: docker compose -f $COMPOSE_FILE up -d"
 fi

@@ -21,6 +21,10 @@ func NewJournaldSource(unit string) Source {
 	return &journaldSource{unit: unit}
 }
 
+func (j *journaldSource) Info() SourceInfo {
+	return SourceInfo{Kind: "journald", Target: j.unit}
+}
+
 // journaldEntry holds the subset of journald JSON fields we need.
 type journaldEntry struct {
 	RealtimeTimestamp string          `json:"__REALTIME_TIMESTAMP"`

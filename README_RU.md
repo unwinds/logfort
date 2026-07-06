@@ -38,9 +38,10 @@ curl -fsSL https://raw.githubusercontent.com/unwinds/logfort/main/install.sh | s
 
 Скрипт установки:
 - Определяет дистрибутив (Debian/Ubuntu/RHEL/Rocky/Alma)
-- Опционально устанавливает Docker и fail2ban
+- Опционально устанавливает Docker и fail2ban и настраивает sshd-джейл с **точным подсчётом попыток** — вы выбираете число попыток до бана и длительность бана, значения проверяются после перезапуска (штатный фильтр fail2ban считает лишние строки лога и банит после 2 попыток из «3»; LogFort ставит исправленный фильтр)
+- Опционально включает **управление fail2ban из веб-интерфейса** (бан/разбан IP, изменение попыток и длительности бана в Settings → Firewall)
 - Предлагает выбор бэкенда: **file** (auth.log) или **journald** (systemd journal)
-- Автоматически определяет путь к лог-файлу авторизации
+- Автоматически определяет путь к лог-файлу и настраивает доступ контейнера к нему (группа лога / монтирование каталога, переживающее logrotate)
 - Генерирует готовый `docker-compose.yml`
 - Опционально скачивает образ и запускает контейнер
 
@@ -81,15 +82,25 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - /var/log/auth.log:/host/auth.log:ro
+      # Монтируйте каталог, а не файл: монтирование одного файла фиксирует
+      # inode, и после первого logrotate новые записи перестают приходить.
+      - /var/log:/host/log:ro
       - /etc/localtime:/etc/localtime:ro   # TZ хоста — время в auth.log локальное
       - ./data:/data
+    # auth.log обычно 640 root:adm — добавьте контейнеру группу лога,
+    # иначе файл не прочитать. GID: stat -c %g /var/log/auth.log
+    group_add:
+      - "4"
     environment:
       - LOGFORT_LISTEN=0.0.0.0:8080
-      - LOGFORT_LOG_PATHS=/host/auth.log
+      - LOGFORT_LOG_PATHS=/host/log/auth.log
       - LOGFORT_DB_PATH=/data/logfort.db
     restart: unless-stopped
 ```
+
+> **RHEL/Rocky/Alma:** `/var/log/secure` имеет права `600 root:root` — замените `group_add` на `user: "0:0"` и укажите `LOGFORT_LOG_PATHS=/host/log/secure`.
+
+Если лог-файл не читается, дашборд показывает красный баннер с причиной (также видно в `docker logs logfort`).
 
 ---
 
@@ -128,7 +139,10 @@ services:
 | `LOGFORT_NFT_TABLE` | `inet filter` | Таблица nftables (`family name`) |
 | `LOGFORT_NFT_SET` | `logfort_block` | Имя сета nftables (должен существовать) |
 | `LOGFORT_FAIL2BAN_JAIL` | `sshd` | Имя джейла fail2ban |
+| `LOGFORT_FAIL2BAN_SOCKET` | `/var/run/fail2ban/fail2ban.sock` | Командный сокет fail2ban (смонтируйте `/var/run/fail2ban` в контейнер) |
 | `LOGFORT_IGNORE_IPS` | RFC-1918 + loopback | IP/CIDR, которые никогда не блокируются |
+
+Если смонтировать сокет fail2ban (`- /var/run/fail2ban:/var/run/fail2ban` + `user: "0:0"` — сокет доступен только root), LogFort общается с fail2ban напрямую: бан/разбан из UI работает через бэкенд `fail2ban`, а в **Settings → Firewall** можно менять число попыток до бана и длительность бана на лету, без перезапуска. При перезапуске fail2ban LogFort сам восстанавливает эти значения.
 
 ### Уведомления
 

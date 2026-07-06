@@ -38,9 +38,10 @@ curl -fsSL https://raw.githubusercontent.com/unwinds/logfort/main/install.sh | s
 
 The script:
 - Detects your distro (Debian/Ubuntu/RHEL/Rocky/Alma)
-- Optionally installs Docker and fail2ban (with a sane sshd jail: 3 attempts / 10 min window / 1 h ban)
+- Optionally installs Docker and fail2ban, and tunes the sshd jail with **exact attempt counting** — you choose attempts-before-ban and ban duration, and the values are verified after restart (the stock fail2ban filter counts extra log lines, banning after 2 of "3" attempts; LogFort ships a corrected filter)
+- Optionally enables **fail2ban control from the web UI** (ban/unban IPs, change attempts/ban duration in Settings → Firewall)
 - Lets you choose **file** backend (auth.log) or **journald** backend (systemd journal)
-- Auto-detects your auth log path
+- Auto-detects your auth log path and sets up container access to it (log group / rotation-safe directory mount)
 - Generates a ready-to-run `docker-compose.yml`
 - Optionally pulls the image and starts the container
 
@@ -89,15 +90,25 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - /var/log/auth.log:/host/auth.log:ro
+      # Mount the directory, not the file — a single-file mount pins the inode
+      # and stops receiving data after the first logrotate.
+      - /var/log:/host/log:ro
       - /etc/localtime:/etc/localtime:ro   # host TZ — auth.log timestamps are local time
       - ./data:/data
+    # auth.log is usually 640 root:adm — give the container the log group,
+    # or it cannot read the file. Find the GID: stat -c %g /var/log/auth.log
+    group_add:
+      - "4"
     environment:
       - LOGFORT_LISTEN=0.0.0.0:8080
-      - LOGFORT_LOG_PATHS=/host/auth.log
+      - LOGFORT_LOG_PATHS=/host/log/auth.log
       - LOGFORT_DB_PATH=/data/logfort.db
     restart: unless-stopped
 ```
+
+> **RHEL/Rocky/Alma:** `/var/log/secure` is `600 root:root` — replace `group_add` with `user: "0:0"` and set `LOGFORT_LOG_PATHS=/host/log/secure`.
+
+If a log file cannot be read, the dashboard shows a red banner with the reason (also visible in `docker logs logfort`).
 
 ---
 
@@ -136,7 +147,10 @@ All settings are environment variables. Notification settings can also be change
 | `LOGFORT_NFT_TABLE` | `inet filter` | nftables table (`family name`) |
 | `LOGFORT_NFT_SET` | `logfort_block` | nftables set name (must exist) |
 | `LOGFORT_FAIL2BAN_JAIL` | `sshd` | fail2ban jail name |
+| `LOGFORT_FAIL2BAN_SOCKET` | `/var/run/fail2ban/fail2ban.sock` | fail2ban command socket (mount `/var/run/fail2ban` into the container) |
 | `LOGFORT_IGNORE_IPS` | RFC-1918 + loopback | CIDRs/IPs that are never banned |
+
+With the fail2ban socket mounted (`- /var/run/fail2ban:/var/run/fail2ban` + `user: "0:0"` — the socket is root-only), LogFort talks to fail2ban directly: manual ban/unban from the UI works through the `fail2ban` responder backend, and **Settings → Firewall** lets you change the jail's attempts-before-ban and ban duration live, no restart needed. LogFort re-applies these values automatically if fail2ban restarts.
 
 ### Notifications
 
