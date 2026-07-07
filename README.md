@@ -11,6 +11,8 @@
 
 LogFort watches your auth logs and shows you a live browser dashboard: who is attacking, where from, what usernames they try, and a world map of attack origins — all without sending a single byte outside your server.
 
+![LogFort dashboard](docs/dashboard.png)
+
 ---
 
 ## Features
