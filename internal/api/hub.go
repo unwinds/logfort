@@ -1,6 +1,9 @@
 package api
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // Hub broadcasts Server-Sent Events to all connected subscribers.
 // All methods are safe for concurrent use.
@@ -11,6 +14,7 @@ type Hub struct {
 	quit      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
+	clients   atomic.Int64 // current subscriber count, for /metrics
 }
 
 func newHub() *Hub {
@@ -34,14 +38,17 @@ func (h *Hub) run() {
 			for c := range clients {
 				close(c)
 			}
+			h.clients.Store(0)
 			return
 		case c := <-h.sub:
 			clients[c] = struct{}{}
+			h.clients.Store(int64(len(clients)))
 		case c := <-h.unsub:
 			if _, ok := clients[c]; ok {
 				delete(clients, c)
 				close(c)
 			}
+			h.clients.Store(int64(len(clients)))
 		case msg := <-h.pub:
 			for c := range clients {
 				select {
@@ -72,6 +79,9 @@ func (h *Hub) publish(msg []byte) {
 	case <-h.quit:
 	}
 }
+
+// clientCount returns the current number of connected subscribers.
+func (h *Hub) clientCount() int64 { return h.clients.Load() }
 
 // close shuts the hub down and disconnects all subscribers. Idempotent:
 // it is called from both Server.Shutdown (to unblock SSE handlers before

@@ -195,6 +195,8 @@
     .badge-unban    { background:rgba(165,184,204,.1);  color:var(--muted); }
     .badge-other    { background:var(--adim); color:var(--accent); }
     .ip   { font-family:'SF Mono','Fira Code',monospace; color:var(--accent); font-size:11.5px; }
+    .ip-link { cursor:pointer; }
+    .ip-link:hover { text-decoration:underline; }
     .user { font-family:'SF Mono','Fira Code',monospace; font-size:11.5px; }
     .ts   { color:var(--muted); white-space:nowrap; font-size:11px; }
     .geo  { font-size:11px; color:var(--muted); }
@@ -469,6 +471,8 @@
         </select>
         <input type="text" id="events-ip-filter" placeholder="Filter by IP" onchange="eventsPage=0;loadEventsPage()"
                style="width:130px;font-size:11px;padding:3px 7px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px;font-family:monospace;">
+        <input type="text" id="events-user-filter" placeholder="Filter by user" onchange="eventsPage=0;loadEventsPage()"
+               style="width:110px;font-size:11px;padding:3px 7px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px;font-family:monospace;">
         <div class="toolbar-right">
           <button class="btn btn-muted" onclick="exportEventsCSV()" title="Download current filter as CSV">CSV</button>
           <span id="events-page-label" style="color:var(--muted);font-size:11px;"></span>
@@ -506,6 +510,7 @@
           Active only
         </label>
         <div class="toolbar-right">
+          <button class="btn btn-muted" onclick="exportBansCSV()" title="Download ban list as CSV">CSV</button>
           <div id="manual-ban-form" class="ban-form" style="display:none;">
             <input type="text" id="ban-ip-input" placeholder="IP address" style="width:140px;">
             <input type="text" id="ban-reason-input" placeholder="Reason (optional)" style="width:130px;">
@@ -573,6 +578,23 @@
               <div class="settings-fields" style="gap:6px;">
                 <div class="sysinfo-row"><span class="sysinfo-key">Version</span><span class="sysinfo-val" id="about-version">—</span></div>
                 <div class="sysinfo-row"><span class="sysinfo-key">Uptime</span><span class="sysinfo-val" id="about-uptime">—</span></div>
+              </div>
+            </div>
+
+            <!-- Backup -->
+            <div class="settings-card wide">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(94,129,172,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="var(--accent)"><path d="M8 1a.75.75 0 01.75.75v6.44l2.22-2.22a.75.75 0 111.06 1.06l-3.5 3.5a.75.75 0 01-1.06 0l-3.5-3.5a.75.75 0 111.06-1.06l2.22 2.22V1.75A.75.75 0 018 1z"/><path d="M2.5 12a.5.5 0 01.5.5v1a.5.5 0 00.5.5h9a.5.5 0 00.5-.5v-1a.5.5 0 011 0v1a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 13.5v-1a.5.5 0 01.5-.5z"/></svg>
+                </div>
+                <h3>Database Backup</h3>
+                <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="backup-db-size"></span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-row" style="align-items:center;gap:12px;">
+                  <button class="btn btn-primary" onclick="window.location='/api/backup'">Download backup</button>
+                  <span class="field-hint" style="flex:1;">A consistent point-in-time snapshot of the SQLite database (events, bans, settings). Safe to run at any time — writes continue uninterrupted. To restore: stop the container and replace <code>data/logfort.db</code> with the downloaded file.</span>
+                </div>
               </div>
             </div>
 
@@ -644,6 +666,109 @@
                   <label>URL (POST JSON)</label>
                   <input type="text" id="webhook-url" placeholder="https://yourserver.com/hook">
                 </div>
+              </div>
+            </div>
+
+            <!-- Slack -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(224,30,90,.12);">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="#E01E5A"><path d="M5.042 15.165a2.528 2.528 0 01-2.52 2.523A2.528 2.528 0 010 15.165a2.527 2.527 0 012.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 012.521-2.52 2.527 2.527 0 012.521 2.52v6.313A2.528 2.528 0 018.834 24a2.528 2.528 0 01-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 01-2.521-2.52A2.528 2.528 0 018.834 0a2.528 2.528 0 012.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 012.521 2.521 2.528 2.528 0 01-2.521 2.521H2.522A2.528 2.528 0 010 8.834a2.528 2.528 0 012.522-2.521h6.312zm10.122 2.521a2.528 2.528 0 012.522-2.521A2.528 2.528 0 0124 8.834a2.528 2.528 0 01-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 01-2.523 2.521 2.527 2.527 0 01-2.52-2.521V2.522A2.527 2.527 0 0115.165 0a2.528 2.528 0 012.523 2.522v6.312zm-2.523 10.122a2.528 2.528 0 012.523 2.522A2.528 2.528 0 0115.165 24a2.527 2.527 0 01-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 01-2.52-2.523 2.526 2.526 0 012.52-2.52h6.313A2.527 2.527 0 0124 15.165a2.528 2.528 0 01-2.522 2.523h-6.313z"/></svg>
+                </div>
+                <h3>Slack</h3>
+                <span class="notifier-status" id="slack-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Incoming Webhook URL</label>
+                  <input type="text" id="slack-url" placeholder="https://hooks.slack.com/services/…">
+                </div>
+              </div>
+            </div>
+
+            <!-- ntfy -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(87,172,87,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="#57ac57"><path d="M8 16a2 2 0 001.985-1.75c.017-.137-.097-.25-.235-.25h-3.5c-.138 0-.252.113-.235.25A2 2 0 008 16zM8 1.918l-.797.161A4.002 4.002 0 004 6c0 .628-.134 2.197-.459 3.742-.16.767-.376 1.566-.663 2.258h10.244c-.287-.692-.502-1.49-.663-2.258C12.134 8.197 12 6.628 12 6a4.002 4.002 0 00-3.203-3.92L8 1.917zM14.22 12c.223.447.481.801.78 1H1c.299-.199.557-.553.78-1C2.68 10.2 3 6.88 3 6c0-2.42 1.72-4.44 4.005-4.901a1 1 0 111.99 0A5.002 5.002 0 0113 6c0 .88.32 4.2 1.22 6z"/></svg>
+                </div>
+                <h3>ntfy</h3>
+                <span class="notifier-status" id="ntfy-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Topic URL</label>
+                  <input type="text" id="ntfy-url" placeholder="https://ntfy.sh/my-secret-topic">
+                </div>
+                <div class="field-group">
+                  <label>Access token (optional)</label>
+                  <div class="field-row">
+                    <input type="password" id="ntfy-token" placeholder="tk_…" autocomplete="off">
+                    <button class="btn btn-muted" onclick="togglePwd('ntfy-token')" style="flex-shrink:0;padding:6px 9px;font-size:11px;">show</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Gotify -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(74,144,217,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="#4a90d9"><path d="M2.678 11.894a1 1 0 01.287.801 10.97 10.97 0 01-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 01.71-.074A8.06 8.06 0 008 14c3.996 0 7-2.807 7-6 0-3.192-3.004-6-7-6S1 4.808 1 8c0 1.468.617 2.83 1.678 3.894zm-.493 3.905a21.682 21.682 0 01-.713.129c-.2.032-.352-.176-.273-.362a9.68 9.68 0 00.244-.637l.003-.01c.248-.72.45-1.548.524-2.319C.743 11.37 0 9.76 0 8c0-3.866 3.582-7 8-7s8 3.134 8 7-3.582 7-8 7a9.06 9.06 0 01-2.347-.306c-.52.263-1.639.742-3.468 1.105z"/></svg>
+                </div>
+                <h3>Gotify</h3>
+                <span class="notifier-status" id="gotify-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Server URL</label>
+                  <input type="text" id="gotify-url" placeholder="https://gotify.example.com">
+                </div>
+                <div class="field-group">
+                  <label>App token</label>
+                  <div class="field-row">
+                    <input type="password" id="gotify-token" placeholder="A1b2C3…" autocomplete="off">
+                    <button class="btn btn-muted" onclick="togglePwd('gotify-token')" style="flex-shrink:0;padding:6px 9px;font-size:11px;">show</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Email (SMTP) -->
+            <div class="settings-card">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(235,203,139,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="var(--warn)"><path d="M.05 3.555A2 2 0 012 2h12a2 2 0 011.95 1.555L8 8.414.05 3.555zM0 4.697v7.104l5.803-3.558L0 4.697zM6.761 8.83l-6.57 4.026A2 2 0 002 14h12a2 2 0 001.808-1.144l-6.57-4.027L8 9.586l-1.239-.757zm3.436-.586L16 11.801V4.697l-5.803 3.546z"/></svg>
+                </div>
+                <h3>Email (SMTP)</h3>
+                <span class="notifier-status" id="email-status-badge">inactive</span>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>SMTP server (host:port)</label>
+                  <input type="text" id="smtp-host" placeholder="smtp.example.com:587">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div class="field-group">
+                    <label>Username (optional)</label>
+                    <input type="text" id="smtp-user" placeholder="alerts@example.com" autocomplete="off">
+                  </div>
+                  <div class="field-group">
+                    <label>Password</label>
+                    <input type="password" id="smtp-pass" placeholder="••••••••" autocomplete="off">
+                  </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div class="field-group">
+                    <label>From</label>
+                    <input type="text" id="smtp-from" placeholder="logfort@example.com">
+                  </div>
+                  <div class="field-group">
+                    <label>To (comma-separated)</label>
+                    <input type="text" id="smtp-to" placeholder="admin@example.com">
+                  </div>
+                </div>
+                <span class="field-hint">Port 465 = implicit TLS; other ports upgrade via STARTTLS when the server supports it.</span>
               </div>
             </div>
 
@@ -786,6 +911,33 @@
                     </select>
                   </div>
                   <span class="field-hint">Any IP exceeding this number of failed password attempts within the window is banned automatically. Only real attempts count (one per wrong password) — auxiliary log lines and accepted logins never do.</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Allowlist (never-ban list) -->
+            <div class="settings-card wide" id="fw-allowlist-card">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(163,190,140,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="var(--success)"><path d="M8 1l6 2.5v4c0 3.5-2.5 6.5-6 7.5C2.5 14 0 11 0 7.5v-4L8 1zm3.354 4.646a.5.5 0 00-.708 0L7 9.293 5.354 7.646a.5.5 0 10-.708.708l2 2a.5.5 0 00.708 0l4-4a.5.5 0 000-.708z"/></svg>
+                </div>
+                <h3>Allowlist — never ban</h3>
+              </div>
+              <div class="settings-fields">
+                <div class="field-group">
+                  <label>Built-in (environment)</label>
+                  <div id="fw-allowlist-base" style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px;"><span style="color:var(--muted)">Loading…</span></div>
+                  <span class="field-hint">Set via <code style="font-family:monospace;padding:1px 5px;border-radius:4px;background:var(--surface2);color:var(--accent);">LOGFORT_IGNORE_IPS</code> — cannot be removed here.</span>
+                </div>
+                <div class="field-group">
+                  <label>Additional IPs / CIDRs</label>
+                  <textarea id="fw-allowlist-extra" rows="2" placeholder="203.0.113.7, 198.51.100.0/24"
+                    style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font-size:12px;width:100%;font-family:'SF Mono','Fira Code',monospace;resize:vertical;"></textarea>
+                  <span class="field-hint">Comma- or newline-separated. These addresses are protected from auto-ban and manual bans immediately after saving — add your home/office IP here.</span>
+                </div>
+                <div class="field-row" style="align-items:center;gap:10px;">
+                  <button class="btn btn-primary" onclick="saveAllowlist()" id="btn-save-allowlist">Save Allowlist</button>
+                  <span class="settings-status" id="allowlist-status"></span>
                 </div>
               </div>
             </div>
@@ -967,7 +1119,7 @@ async function loadStats() {
     document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
     lastTimeline = {buckets: d.timeline, win: w, secs: d.bucket_secs};
     drawTimeline(d.timeline, w, d.bucket_secs);
-    renderTopList('top-ips',       'Top Attacker IPs', d.top_ips,       t=>`<span class="name ip">${esc(t.ip)}</span>`,       t=>t.count);
+    renderTopList('top-ips',       'Top Attacker IPs', d.top_ips,       t=>`<span class="name ip ip-link" onclick="filterByIP('${esc(t.ip)}')" title="Show all events from this IP">${esc(t.ip)}</span>`, t=>t.count);
     renderTopList('top-usernames', 'Top Usernames',    d.top_usernames, t=>`<span class="name user">${esc(t.username)}</span>`,t=>t.count);
     renderTopList('top-countries', 'Top Countries',    d.top_countries, t=>`<span class="name">${esc(t.country||'—')}</span>`, t=>t.count);
   } catch(e) { console.error('stats',e); }
@@ -1004,7 +1156,7 @@ function eventRowHTML(e) {
   return `<tr>
     <td class="ts">${fmtTS(e.ts)}</td>
     <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
-    <td class="ip">${esc(e.ip)}</td>
+    <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(e.ip)}')" title="Show all events from this IP">${esc(e.ip)}</span></td>
     <td class="geo">${esc(e.country||'')}</td>
     <td class="user">${esc(e.username||'')}</td>
     <td style="color:var(--muted)">${e.port||''}</td>
@@ -1044,13 +1196,29 @@ function eventsFilterParams() {
   let p = wSecs[w] ? '&since='+(Math.floor(Date.now()/1000)-wSecs[w]) : '';
   const type = document.getElementById('events-type-filter').value;
   const ip   = document.getElementById('events-ip-filter').value.trim();
+  const user = document.getElementById('events-user-filter').value.trim();
   if (type) p += '&type='+encodeURIComponent(type);
   if (ip)   p += '&ip='+encodeURIComponent(ip);
+  if (user) p += '&user='+encodeURIComponent(user);
   return p;
+}
+
+// filterByIP jumps to the Events section pre-filtered to one IP — wired to
+// every IP shown in tables and top lists.
+function filterByIP(ip) {
+  document.getElementById('events-ip-filter').value = ip;
+  document.getElementById('events-user-filter').value = '';
+  document.getElementById('events-type-filter').value = '';
+  switchSection('events');
 }
 
 function exportEventsCSV() {
   window.open('/api/events.csv?limit=10000'+eventsFilterParams(), '_blank');
+}
+
+function exportBansCSV() {
+  const activeOnly = document.getElementById('bans-active-only').checked;
+  window.open('/api/bans.csv?active='+(activeOnly?'true':'false'), '_blank');
 }
 
 async function loadEventsPage() {
@@ -1121,7 +1289,7 @@ function prependLiveEvent(ev) {
   row.innerHTML = `
     <td class="ts">${fmtTS(ev.ts)}</td>
     <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
-    <td class="ip">${esc(ev.ip)}</td>
+    <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(ev.ip)}')" title="Show all events from this IP">${esc(ev.ip)}</span></td>
     <td class="geo">${esc(ev.country||'')}</td>
     <td class="user">${esc(ev.username||'')}</td>
     <td style="color:var(--muted)">${ev.port||''}</td>
@@ -1188,7 +1356,7 @@ async function loadBans() {
       const unbanBtn = (responderEnabled&&b.active) ? `<button class="btn btn-muted" style="font-size:10px;padding:2px 8px;" onclick="unbanIP('${esc(b.ip)}')">Unban</button>` : '';
       const dur = b.unbanned_at ? fmtDuration(b.unbanned_at-b.banned_at) : fmtDuration(Math.floor(Date.now()/1000)-b.banned_at);
       return `<tr>
-        <td class="ip">${esc(b.ip)}</td>
+        <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(b.ip)}')" title="Show all events from this IP">${esc(b.ip)}</span></td>
         <td style="color:var(--muted);font-size:11px;">${esc(b.jail||'—')}</td>
         <td class="ts">${fmtTS(b.banned_at)}</td>
         <td style="color:var(--muted);font-size:11px;">${dur}</td>
@@ -1330,13 +1498,22 @@ async function loadSystemInfo() {
       {k:'Responder',  v:d.responder_enabled?d.responder_backend:'Disabled', cls:d.responder_enabled?'sysinfo-ok':'sysinfo-off'},
       {k:'Auth',       v:d.auth_enabled?'Enabled':'Disabled',      cls:d.auth_enabled?'sysinfo-warn':'sysinfo-off'},
       {k:'Listen',     v:d.listen},
+      d.db_size_bytes ? {k:'Database size', v:fmtBytes(d.db_size_bytes)} : null,
       h.parsed_total!=null ? {k:'Lines parsed', v:fmt(h.parsed_total), cls:'sysinfo-ok'} : null,
       h.unparsed_total!=null ? {k:'Lines unparsed', v:fmt(h.unparsed_total), cls:h.unparsed_total>0?'sysinfo-warn':''} : null,
     ].filter(Boolean);
     document.getElementById('system-info-rows').innerHTML = rows.map(r =>
       `<div class="sysinfo-row"><span class="sysinfo-key">${esc(r.k)}</span><span class="sysinfo-val ${r.cls||''}">${esc(r.v||'—')}</span></div>`
     ).join('');
+    document.getElementById('backup-db-size').textContent = d.db_size_bytes ? fmtBytes(d.db_size_bytes) : '';
   } catch(e) { console.error('system info',e); }
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB';
+  return (n/1073741824).toFixed(2) + ' GB';
 }
 
 // ── General settings ───────────────────────────────────────────────────────
@@ -1371,20 +1548,29 @@ async function saveGeneralSettings() {
 async function loadNotifySettings() {
   try {
     const d = await fetch('/api/settings').then(r=>r.json());
-    document.getElementById('tg-token').value    = d.telegram_token  ||'';
-    document.getElementById('tg-chat').value     = d.telegram_chat_id||'';
-    document.getElementById('discord-url').value = d.discord_url     ||'';
-    document.getElementById('webhook-url').value = d.webhook_url     ||'';
+    // input id → settings JSON key, drives value fill and env-lock in one pass
+    const FIELD_IDS = {
+      'tg-token':'telegram_token', 'tg-chat':'telegram_chat_id',
+      'discord-url':'discord_url', 'webhook-url':'webhook_url',
+      'slack-url':'slack_url', 'ntfy-url':'ntfy_url', 'ntfy-token':'ntfy_token',
+      'gotify-url':'gotify_url', 'gotify-token':'gotify_token',
+      'smtp-host':'smtp_host', 'smtp-user':'smtp_user', 'smtp-pass':'smtp_pass',
+      'smtp-from':'smtp_from', 'smtp-to':'smtp_to',
+    };
+    const locked = d.env_locked || [];
+    for (const [id, key] of Object.entries(FIELD_IDS)) {
+      document.getElementById(id).value = d[key] || '';
+      // Fields pinned by env vars cannot be edited at runtime — disable them
+      // instead of letting the user save changes that would be ignored.
+      lockField(id, locked.includes(key));
+    }
     setBadge('tg-status-badge',      !!(d.telegram_token&&d.telegram_chat_id));
     setBadge('discord-status-badge', !!d.discord_url);
     setBadge('webhook-status-badge', !!d.webhook_url);
-    // Fields pinned by env vars cannot be edited at runtime — disable them
-    // instead of letting the user save changes that would be ignored.
-    const locked = d.env_locked || [];
-    lockField('tg-token',     locked.includes('telegram_token'));
-    lockField('tg-chat',      locked.includes('telegram_chat_id'));
-    lockField('discord-url',  locked.includes('discord_url'));
-    lockField('webhook-url',  locked.includes('webhook_url'));
+    setBadge('slack-status-badge',   !!d.slack_url);
+    setBadge('ntfy-status-badge',    !!d.ntfy_url);
+    setBadge('gotify-status-badge',  !!(d.gotify_url&&d.gotify_token));
+    setBadge('email-status-badge',   !!(d.smtp_host&&d.smtp_from&&d.smtp_to));
     const rulesLocked = locked.includes('rules');
     ['rule-ban','rule-accepted','rule-country','rule-threshold','threshold-n','threshold-dur']
       .forEach(id => lockField(id, rulesLocked));
@@ -1430,11 +1616,22 @@ async function saveSettings() {
   if (document.getElementById('rule-threshold').checked) {
     rules.push(`threshold:${document.getElementById('threshold-n').value||'100'}/${document.getElementById('threshold-dur').value||'1h'}`);
   }
+  const val = id => document.getElementById(id).value.trim();
   const body = {
-    telegram_token:   document.getElementById('tg-token').value.trim(),
-    telegram_chat_id: document.getElementById('tg-chat').value.trim(),
-    discord_url:      document.getElementById('discord-url').value.trim(),
-    webhook_url:      document.getElementById('webhook-url').value.trim(),
+    telegram_token:   val('tg-token'),
+    telegram_chat_id: val('tg-chat'),
+    discord_url:      val('discord-url'),
+    webhook_url:      val('webhook-url'),
+    slack_url:        val('slack-url'),
+    ntfy_url:         val('ntfy-url'),
+    ntfy_token:       val('ntfy-token'),
+    gotify_url:       val('gotify-url'),
+    gotify_token:     val('gotify-token'),
+    smtp_host:        val('smtp-host'),
+    smtp_user:        val('smtp-user'),
+    smtp_pass:        document.getElementById('smtp-pass').value,
+    smtp_from:        val('smtp-from'),
+    smtp_to:          val('smtp-to'),
     rules:            rules.join(','),
   };
   const btn=document.getElementById('btn-save'), status=document.getElementById('settings-status');
@@ -1447,6 +1644,10 @@ async function saveSettings() {
     setBadge('tg-status-badge',      !!(body.telegram_token&&body.telegram_chat_id));
     setBadge('discord-status-badge', !!body.discord_url);
     setBadge('webhook-status-badge', !!body.webhook_url);
+    setBadge('slack-status-badge',   !!body.slack_url);
+    setBadge('ntfy-status-badge',    !!body.ntfy_url);
+    setBadge('gotify-status-badge',  !!(body.gotify_url&&body.gotify_token));
+    setBadge('email-status-badge',   !!(body.smtp_host&&body.smtp_from&&body.smtp_to));
   } catch(e) { status.textContent='✗ '+e.message; status.className='settings-status err'; }
   finally {
     btn.disabled=false;
@@ -1499,6 +1700,13 @@ async function loadFirewallSettings() {
     if (d.autoban_window && [...sel.options].some(o=>o.value===d.autoban_window)) sel.value=d.autoban_window;
     updateFwAutoBanBadge();
 
+    // Allowlist: built-in entries as read-only chips, extra entries editable.
+    document.getElementById('fw-allowlist-extra').value = d.ignore_ips || '';
+    const base = d.ignore_ips_base || [];
+    document.getElementById('fw-allowlist-base').innerHTML = base.length
+      ? base.map(e=>`<code style="font-family:monospace;padding:2px 7px;border-radius:4px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);">${esc(e)}</code>`).join('')
+      : '<span style="color:var(--muted)">none</span>';
+
     // fail2ban jail card: shown only when the socket is reachable; values are
     // what fail2ban currently enforces.
     const f2b = d.f2b || {};
@@ -1516,6 +1724,21 @@ async function loadFirewallSettings() {
       card.style.display = 'none';
     }
   } catch(e) { console.error('fw settings',e); }
+}
+
+async function saveAllowlist() {
+  const btn=document.getElementById('btn-save-allowlist'), status=document.getElementById('allowlist-status');
+  // Accept commas or newlines in the textarea; the API takes a comma list.
+  const entries = document.getElementById('fw-allowlist-extra').value
+    .split(/[\n,]/).map(s=>s.trim()).filter(Boolean).join(',');
+  btn.disabled=true;
+  try {
+    const r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ignore_ips:entries})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error||r.status);
+    status.textContent='✓ Saved — active immediately'; status.className='settings-status ok';
+  } catch(e) { status.textContent='✗ '+e.message; status.className='settings-status err'; }
+  finally { btn.disabled=false; setTimeout(()=>{ status.textContent=''; },5000); }
 }
 
 async function saveF2BSettings() {

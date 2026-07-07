@@ -44,6 +44,8 @@ func (s *stubStore) GetSetting(context.Context, string) (string, bool, error)   
 func (s *stubStore) SetSetting(context.Context, string, string) error               { return nil }
 func (s *stubStore) SetSettings(context.Context, map[string]string) error           { return nil }
 func (s *stubStore) GetAllSettings(context.Context) (map[string]string, error)      { return nil, nil }
+func (s *stubStore) Ping(context.Context) error                                     { return nil }
+func (s *stubStore) Backup(context.Context, string) error                           { return nil }
 func (s *stubStore) Close() error                                                   { return nil }
 
 // --- helpers ---

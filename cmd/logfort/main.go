@@ -109,6 +109,13 @@ func main() {
 	if cfg.ResponderEnabled {
 		slog.Info("responder enabled", "backend", resp.Name())
 	}
+	// Extra allowlist entries added from the settings UI (persisted in DB).
+	// Bad stored data must not kill startup — warn and continue with the base list.
+	if len(cfg.ExtraIgnoreIPs) > 0 {
+		if err := allowlist.SetExtra(cfg.ExtraIgnoreIPs); err != nil {
+			slog.Warn("ignoring invalid extra allowlist entries from settings", "err", err)
+		}
+	}
 
 	// Build notify dispatcher (nil if no notifiers or rules configured).
 	dispatcher, err := notify.New(cfg, st)

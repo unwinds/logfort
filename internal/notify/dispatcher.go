@@ -32,6 +32,14 @@ func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
 	tgToken := strings.TrimSpace(cfg.NotifyTelegramToken)
 	tgChat := strings.TrimSpace(cfg.NotifyTelegramChat)
 	discordURL := strings.TrimSpace(cfg.NotifyDiscordURL)
+	slackURL := strings.TrimSpace(cfg.NotifySlackURL)
+	ntfyURL := strings.TrimSpace(cfg.NotifyNtfyURL)
+	ntfyToken := strings.TrimSpace(cfg.NotifyNtfyToken)
+	gotifyURL := strings.TrimSpace(cfg.NotifyGotifyURL)
+	gotifyToken := strings.TrimSpace(cfg.NotifyGotifyToken)
+	smtpHost := strings.TrimSpace(cfg.NotifySMTPHost)
+	smtpFrom := strings.TrimSpace(cfg.NotifySMTPFrom)
+	smtpTo := strings.TrimSpace(cfg.NotifySMTPTo)
 
 	var notifiers []Notifier
 	if webhookURL != "" {
@@ -42,6 +50,19 @@ func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
 	}
 	if discordURL != "" {
 		notifiers = append(notifiers, NewDiscord(discordURL))
+	}
+	if slackURL != "" {
+		notifiers = append(notifiers, NewSlack(slackURL))
+	}
+	if ntfyURL != "" {
+		notifiers = append(notifiers, NewNtfy(ntfyURL, ntfyToken))
+	}
+	if gotifyURL != "" && gotifyToken != "" {
+		notifiers = append(notifiers, NewGotify(gotifyURL, gotifyToken))
+	}
+	if smtpHost != "" && smtpFrom != "" && smtpTo != "" {
+		notifiers = append(notifiers,
+			NewEmail(smtpHost, strings.TrimSpace(cfg.NotifySMTPUser), cfg.NotifySMTPPass, smtpFrom, smtpTo))
 	}
 	if len(notifiers) == 0 {
 		return nil, nil

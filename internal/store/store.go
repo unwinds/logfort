@@ -39,6 +39,11 @@ type Store interface {
 	SetSettings(ctx context.Context, pairs map[string]string) error
 	// GetAllSettings returns all key-value pairs from the settings table.
 	GetAllSettings(ctx context.Context) (map[string]string, error)
+	// Ping verifies the database is reachable and answering queries.
+	Ping(ctx context.Context) error
+	// Backup writes a consistent snapshot of the database to dstPath
+	// (which must not exist yet). Safe to call while the DB is in use.
+	Backup(ctx context.Context, dstPath string) error
 	Close() error
 }
 
@@ -59,6 +64,7 @@ type EventQuery struct {
 	EventType string
 	IP        string
 	Country   string
+	Username  string
 	Since     *time.Time
 	Until     *time.Time
 }

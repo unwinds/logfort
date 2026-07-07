@@ -19,17 +19,27 @@ const maxErrBody = 512
 // Retry-After — with the wait capped so a single Send stays well inside the
 // dispatcher's per-event budget.
 func postJSON(ctx context.Context, client *http.Client, url string, payload any) (int, []byte, error) {
+	return postJSONHdr(ctx, client, url, payload, nil)
+}
+
+// postJSONHdr is postJSON with extra request headers (e.g. Gotify's
+// X-Gotify-Key). Content-Type is always application/json.
+func postJSONHdr(ctx context.Context, client *http.Client, url string, payload any, hdr map[string]string) (int, []byte, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return 0, nil, err
 	}
+	if hdr == nil {
+		hdr = map[string]string{}
+	}
+	hdr["Content-Type"] = "application/json"
 
-	status, body, err := doPost(ctx, client, url, data)
+	status, body, err := doPost(ctx, client, url, data, hdr)
 	if err == nil && (status == http.StatusTooManyRequests || status >= 500) {
 		wait := retryAfter(body, 2*time.Second)
 		select {
 		case <-time.After(wait):
-			status, body, err = doPost(ctx, client, url, data)
+			status, body, err = doPost(ctx, client, url, data, hdr)
 		case <-ctx.Done():
 			return status, body, nil // report the original response, not ctx error
 		}
@@ -37,12 +47,14 @@ func postJSON(ctx context.Context, client *http.Client, url string, payload any)
 	return status, body, err
 }
 
-func doPost(ctx context.Context, client *http.Client, url string, data []byte) (int, []byte, error) {
+func doPost(ctx context.Context, client *http.Client, url string, data []byte, hdr map[string]string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, err

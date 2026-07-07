@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -93,6 +94,68 @@ func TestListEventsFilter(t *testing.T) {
 	}
 	if rows[0].EventType != "accepted" {
 		t.Errorf("event type: got %q", rows[0].EventType)
+	}
+}
+
+func TestListEventsUsernameFilter(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC()
+	e1 := makeEvent("1.1.1.1", "failed_password", now.Add(-2*time.Second))
+	e1.Username = "root"
+	e2 := makeEvent("2.2.2.2", "failed_password", now.Add(-1*time.Second))
+	e2.Username = "admin"
+	_ = s.InsertEvent(ctx, e1)
+	_ = s.InsertEvent(ctx, e2)
+
+	rows, total, err := s.ListEvents(ctx, store.EventQuery{Username: "root", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 1 || len(rows) != 1 || rows[0].Username != "root" {
+		t.Errorf("username filter: total=%d rows=%d", total, len(rows))
+	}
+}
+
+func TestPing(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+func TestBackup(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now().UTC()
+	_ = s.InsertEvent(ctx, makeEvent("1.1.1.1", "failed_password", now))
+	_ = s.InsertEvent(ctx, makeEvent("2.2.2.2", "accepted", now.Add(-time.Second)))
+
+	dst := filepath.Join(t.TempDir(), "backup.db")
+	if err := s.Backup(ctx, dst); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+
+	// The snapshot must be a valid database containing the same events.
+	restored, err := store.New(dst)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer restored.Close()
+	_, total, err := restored.ListEvents(ctx, store.EventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list from backup: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("backup total events: got %d, want 2", total)
+	}
+
+	// A second backup to the same (now existing) path must fail loudly, not
+	// silently truncate.
+	if err := s.Backup(ctx, dst); err == nil {
+		t.Error("want error when destination already exists")
 	}
 }
 

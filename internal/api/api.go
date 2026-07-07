@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -253,8 +256,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/events.csv", s.handleEventsCSV)
 	s.mux.HandleFunc("GET /api/bans", s.handleBans)
+	s.mux.HandleFunc("GET /api/bans.csv", s.handleBansCSV)
 	s.mux.HandleFunc("GET /api/map", s.handleMap)
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
+	s.mux.HandleFunc("GET /api/backup", s.handleBackup)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	// Write endpoints (require responder enabled).
@@ -289,12 +294,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if s.parsedFn != nil {
 		parsed, unparsed = s.parsedFn()
 	}
+	// End-to-end DB probe: a corrupted or locked-up database must flip the
+	// Docker HEALTHCHECK (which curls this endpoint) to unhealthy.
+	dbOK := true
+	if err := s.store.Ping(r.Context()); err != nil {
+		dbOK = false
+		slog.Error("health: db probe failed", "err", err)
+	}
 	resp := map[string]any{
 		"status":            "ok",
 		"version":           s.version,
 		"uptime_s":          int64(time.Since(s.startTS).Seconds()),
 		"parsed_total":      parsed,
 		"unparsed_total":    unparsed,
+		"db_ok":             dbOK,
 		"responder_enabled": s.cfg.ResponderEnabled,
 		"responder_backend": s.responder.Name(),
 	}
@@ -310,7 +323,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		resp["sources"] = sources
 		resp["sources_ok"] = ok
 	}
-	writeJSON(w, http.StatusOK, resp)
+	status := http.StatusOK
+	if !dbOK {
+		resp["status"] = "degraded"
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, resp)
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +350,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // eventQueryFromRequest builds a store.EventQuery from shared query params
-// (limit, offset, type, ip, country, since, until) capped at maxLimit.
+// (limit, offset, type, ip, country, user, since, until) capped at maxLimit.
 func eventQueryFromRequest(r *http.Request, defLimit, maxLimit int) store.EventQuery {
 	q := store.EventQuery{
 		Limit:     parseIntQuery(r, "limit", defLimit),
@@ -340,6 +358,7 @@ func eventQueryFromRequest(r *http.Request, defLimit, maxLimit int) store.EventQ
 		EventType: r.URL.Query().Get("type"),
 		IP:        r.URL.Query().Get("ip"),
 		Country:   r.URL.Query().Get("country"),
+		Username:  r.URL.Query().Get("user"),
 	}
 	if q.Limit < 1 {
 		q.Limit = defLimit
@@ -442,6 +461,91 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP logfort_lines_parsed_total Log lines parsed into events.\n# TYPE logfort_lines_parsed_total counter\nlogfort_lines_parsed_total %d\n", parsed)
 	fmt.Fprintf(w, "# HELP logfort_lines_unparsed_total Log lines that matched no pattern.\n# TYPE logfort_lines_unparsed_total counter\nlogfort_lines_unparsed_total %d\n", unparsed)
 	fmt.Fprintf(w, "# HELP logfort_bans_active Currently active bans.\n# TYPE logfort_bans_active gauge\nlogfort_bans_active %d\n", activeBans)
+	fmt.Fprintf(w, "# HELP logfort_sse_clients Currently connected event-stream clients.\n# TYPE logfort_sse_clients gauge\nlogfort_sse_clients %d\n", s.hub.clientCount())
+	if size := dbSizeBytes(s.cfg.DBPath); size > 0 {
+		fmt.Fprintf(w, "# HELP logfort_db_size_bytes SQLite database file size.\n# TYPE logfort_db_size_bytes gauge\nlogfort_db_size_bytes %d\n", size)
+	}
+}
+
+// dbSizeBytes returns the size of the database file, or 0 when it cannot be
+// determined (e.g. :memory: databases in tests).
+func dbSizeBytes(path string) int64 {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return 0
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+// handleBansCSV exports ban records as a CSV download.
+func (s *Server) handleBansCSV(w http.ResponseWriter, r *http.Request) {
+	activeOnly := r.URL.Query().Get("active") != "false"
+	bans, err := s.store.ListBans(r.Context(), activeOnly)
+	if err != nil {
+		slog.Error("export bans", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="logfort-bans.csv"`)
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"ip", "jail", "banned_at", "unbanned_at", "active", "source", "reason"})
+	for _, b := range bans {
+		unbannedAt := ""
+		if b.UnbannedAt != nil {
+			unbannedAt = time.Unix(*b.UnbannedAt, 0).UTC().Format(time.RFC3339)
+		}
+		_ = cw.Write([]string{
+			b.IP, csvCell(b.Jail),
+			time.Unix(b.BannedAt, 0).UTC().Format(time.RFC3339),
+			unbannedAt, strconv.FormatBool(b.Active), b.Source, csvCell(b.Reason),
+		})
+	}
+	cw.Flush()
+}
+
+// handleBackup streams a consistent point-in-time snapshot of the SQLite
+// database as a download. The snapshot is produced with VACUUM INTO, so it is
+// safe while the pipeline keeps writing and is also defragmented for free.
+func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	tmp, err := os.CreateTemp("", "logfort-backup-*.db")
+	if err != nil {
+		slog.Error("backup: temp file", "err", err)
+		writeError(w, http.StatusInternalServerError, "backup failed")
+		return
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	// VACUUM INTO refuses to overwrite; hand it a fresh path and make sure the
+	// snapshot is cleaned up whatever happens below.
+	os.Remove(tmpPath)
+	defer os.Remove(tmpPath)
+
+	if err := s.store.Backup(r.Context(), tmpPath); err != nil {
+		slog.Error("backup", "err", err)
+		writeError(w, http.StatusInternalServerError, "backup failed")
+		return
+	}
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		slog.Error("backup: open snapshot", "err", err)
+		writeError(w, http.StatusInternalServerError, "backup failed")
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Type", "application/vnd.sqlite3")
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="logfort-backup-`+time.Now().UTC().Format("20060102-150405")+`.db"`)
+	if fi, err := f.Stat(); err == nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
+	}
+	if _, err := io.Copy(w, f); err != nil {
+		slog.Warn("backup: stream interrupted", "err", err)
+	}
 }
 
 func (s *Server) handleBans(w http.ResponseWriter, r *http.Request) {
@@ -640,6 +744,27 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 
 // --- settings handlers ---
 
+// notifySettingJSONKeys maps the JSON field names used by GET/POST
+// /api/settings to the DB settings keys of config.NotifySettingKeys. One
+// table drives reading, writing, and env-lock reporting so the three can
+// never disagree.
+var notifySettingJSONKeys = map[string]string{
+	"telegram_token":   "notify.telegram.token",
+	"telegram_chat_id": "notify.telegram.chat_id",
+	"discord_url":      "notify.discord.url",
+	"webhook_url":      "notify.webhook.url",
+	"slack_url":        "notify.slack.url",
+	"ntfy_url":         "notify.ntfy.url",
+	"ntfy_token":       "notify.ntfy.token",
+	"gotify_url":       "notify.gotify.url",
+	"gotify_token":     "notify.gotify.token",
+	"smtp_host":        "notify.smtp.host",
+	"smtp_user":        "notify.smtp.user",
+	"smtp_pass":        "notify.smtp.pass",
+	"smtp_from":        "notify.smtp.from",
+	"smtp_to":          "notify.smtp.to",
+}
+
 func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"backend":           s.cfg.Backend,
@@ -653,21 +778,25 @@ func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 		"f2b_available":     s.f2bMgr != nil && s.f2bMgr.Available(),
 		"auth_enabled":      s.cfg.AuthEnabled,
 		"listen":            s.cfg.Listen,
+		"db_path":           s.cfg.DBPath,
+		"db_size_bytes":     dbSizeBytes(s.cfg.DBPath),
 	})
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.RLock()
 	resp := map[string]any{
-		"telegram_token":    s.cfg.NotifyTelegramToken,
-		"telegram_chat_id":  s.cfg.NotifyTelegramChat,
-		"discord_url":       s.cfg.NotifyDiscordURL,
-		"webhook_url":       s.cfg.NotifyWebhookURL,
 		"rules":             strings.Join(s.cfg.NotifyRules, ","),
 		"retention_days":    s.cfg.RetentionDays,
 		"autoban_enabled":   s.cfg.AutoBanEnabled,
 		"autoban_threshold": s.cfg.AutoBanThreshold,
 		"autoban_window":    s.cfg.AutoBanWindow,
+		"ignore_ips":        strings.Join(s.cfg.ExtraIgnoreIPs, ", "),
+		"ignore_ips_base":   append([]string{}, s.cfg.IgnoreIPs...),
+	}
+	cfgKeys := s.cfg.NotifySettingKeys()
+	for jsonKey, dbKey := range notifySettingJSONKeys {
+		resp[jsonKey] = *cfgKeys[dbKey]
 	}
 	storedF2B := f2b.JailSettings{
 		MaxRetry:     s.cfg.F2BMaxRetry,
@@ -679,21 +808,16 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	// Fields pinned by env vars cannot be changed at runtime — tell the UI so
 	// it can disable those inputs instead of silently ignoring edits.
 	locked := []string{}
-	if s.envCfg.NotifyTelegramToken != "" {
-		locked = append(locked, "telegram_token")
-	}
-	if s.envCfg.NotifyTelegramChat != "" {
-		locked = append(locked, "telegram_chat_id")
-	}
-	if s.envCfg.NotifyDiscordURL != "" {
-		locked = append(locked, "discord_url")
-	}
-	if s.envCfg.NotifyWebhookURL != "" {
-		locked = append(locked, "webhook_url")
+	envKeys := s.envCfg.NotifySettingKeys()
+	for jsonKey, dbKey := range notifySettingJSONKeys {
+		if *envKeys[dbKey] != "" {
+			locked = append(locked, jsonKey)
+		}
 	}
 	if len(s.envCfg.NotifyRules) > 0 {
 		locked = append(locked, "rules")
 	}
+	sort.Strings(locked)
 	resp["env_locked"] = locked
 
 	// fail2ban jail block: live values when the server is reachable (the
@@ -721,27 +845,33 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "request body too large or unreadable")
+		return
+	}
 	// Pointer fields: nil means "field not present in request → don't change".
 	var req struct {
-		TelegramToken *string `json:"telegram_token"`
-		TelegramChat  *string `json:"telegram_chat_id"`
-		DiscordURL    *string `json:"discord_url"`
-		WebhookURL    *string `json:"webhook_url"`
-		Rules         *string `json:"rules"`
+		Rules *string `json:"rules"`
 		// General settings
 		RetentionDays    *int    `json:"retention_days"`
 		AutoBanEnabled   *bool   `json:"autoban_enabled"`
 		AutoBanThreshold *int    `json:"autoban_threshold"`
 		AutoBanWindow    *string `json:"autoban_window"`
+		IgnoreIPs        *string `json:"ignore_ips"`
 		// fail2ban jail tuning (applied via the fail2ban socket)
 		F2BMaxRetry *int64 `json:"f2b_maxretry"`
 		F2BBanTime  *int64 `json:"f2b_bantime_secs"`
 		F2BFindTime *int64 `json:"f2b_findtime_secs"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// The plain-string notify channel fields are decoded through the raw
+	// message so notifySettingJSONKeys is the single list of what exists.
+	var rawFields map[string]json.RawMessage
+	_ = json.Unmarshal(body, &rawFields) // syntax already validated above
 
 	// Build the effective config: start from current, apply request values only
 	// for fields not pinned by env vars.
@@ -749,25 +879,33 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	proposed := *s.cfg
 	s.cfgMu.RUnlock()
 
-	// Notify fields (env vars pin their values; nil request field = skip).
-	if req.TelegramToken != nil && s.envCfg.NotifyTelegramToken == "" {
-		proposed.NotifyTelegramToken = *req.TelegramToken
+	toSave := make(map[string]string)
+	notifyChanged := false
+
+	envKeys := s.envCfg.NotifySettingKeys()
+	propKeys := proposed.NotifySettingKeys()
+	for jsonKey, dbKey := range notifySettingJSONKeys {
+		rawVal, present := rawFields[jsonKey]
+		if !present {
+			continue
+		}
+		var v string
+		if err := json.Unmarshal(rawVal, &v); err != nil {
+			writeError(w, http.StatusBadRequest, jsonKey+" must be a string")
+			return
+		}
+		notifyChanged = true
+		if *envKeys[dbKey] != "" {
+			continue // env var pins this field; ignore the UI value
+		}
+		*propKeys[dbKey] = v
+		toSave[dbKey] = v
 	}
-	if req.TelegramChat != nil && s.envCfg.NotifyTelegramChat == "" {
-		proposed.NotifyTelegramChat = *req.TelegramChat
-	}
-	if req.DiscordURL != nil && s.envCfg.NotifyDiscordURL == "" {
-		proposed.NotifyDiscordURL = *req.DiscordURL
-	}
-	if req.WebhookURL != nil && s.envCfg.NotifyWebhookURL == "" {
-		proposed.NotifyWebhookURL = *req.WebhookURL
-	}
-	if req.Rules != nil && len(s.envCfg.NotifyRules) == 0 {
-		proposed.NotifyRules = nil
-		for _, rule := range strings.Split(*req.Rules, ",") {
-			if rule = strings.TrimSpace(rule); rule != "" {
-				proposed.NotifyRules = append(proposed.NotifyRules, rule)
-			}
+	if req.Rules != nil {
+		notifyChanged = true
+		if len(s.envCfg.NotifyRules) == 0 {
+			proposed.NotifyRules = config.SplitList(*req.Rules)
+			toSave["notify.rules"] = *req.Rules
 		}
 	}
 
@@ -787,6 +925,17 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		proposed.AutoBanWindow = *req.AutoBanWindow
+	}
+
+	// Extra allowlist entries — validate every IP/CIDR before persisting.
+	if req.IgnoreIPs != nil {
+		entries := config.SplitList(*req.IgnoreIPs)
+		if _, err := responder.ParseAllowlist(entries); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid ignore_ips: "+err.Error())
+			return
+		}
+		proposed.ExtraIgnoreIPs = entries
+		toSave["security.ignore_ips"] = strings.Join(entries, ",")
 	}
 
 	// fail2ban jail fields — validate ranges up front.
@@ -844,26 +993,10 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Collect all changed fields and persist atomically in a single
-	// transaction. Env-pinned notify fields are skipped: the env var wins at
+	// Persist all changed fields atomically in a single transaction.
+	// Env-pinned notify fields were skipped above: the env var wins at
 	// runtime, so writing a diverging DB value would only create a surprise
 	// when the env var is later removed.
-	toSave := make(map[string]string)
-	if req.TelegramToken != nil && s.envCfg.NotifyTelegramToken == "" {
-		toSave["notify.telegram.token"] = *req.TelegramToken
-	}
-	if req.TelegramChat != nil && s.envCfg.NotifyTelegramChat == "" {
-		toSave["notify.telegram.chat_id"] = *req.TelegramChat
-	}
-	if req.DiscordURL != nil && s.envCfg.NotifyDiscordURL == "" {
-		toSave["notify.discord.url"] = *req.DiscordURL
-	}
-	if req.WebhookURL != nil && s.envCfg.NotifyWebhookURL == "" {
-		toSave["notify.webhook.url"] = *req.WebhookURL
-	}
-	if req.Rules != nil && len(s.envCfg.NotifyRules) == 0 {
-		toSave["notify.rules"] = *req.Rules
-	}
 	if req.F2BMaxRetry != nil {
 		toSave["f2b.maxretry"] = strconv.FormatInt(proposed.F2BMaxRetry, 10)
 	}
@@ -899,23 +1032,31 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Apply effective config to in-memory state.
 	s.cfgMu.Lock()
-	s.cfg.NotifyTelegramToken = proposed.NotifyTelegramToken
-	s.cfg.NotifyTelegramChat = proposed.NotifyTelegramChat
-	s.cfg.NotifyDiscordURL = proposed.NotifyDiscordURL
-	s.cfg.NotifyWebhookURL = proposed.NotifyWebhookURL
+	liveKeys := s.cfg.NotifySettingKeys()
+	for dbKey, src := range proposed.NotifySettingKeys() {
+		*liveKeys[dbKey] = *src
+	}
 	s.cfg.NotifyRules = proposed.NotifyRules
 	s.cfg.RetentionDays = proposed.RetentionDays
 	s.cfg.AutoBanEnabled = proposed.AutoBanEnabled
 	s.cfg.AutoBanThreshold = proposed.AutoBanThreshold
 	s.cfg.AutoBanWindow = proposed.AutoBanWindow
+	s.cfg.ExtraIgnoreIPs = proposed.ExtraIgnoreIPs
 	s.cfg.F2BMaxRetry = proposed.F2BMaxRetry
 	s.cfg.F2BBanTime = proposed.F2BBanTime
 	s.cfg.F2BFindTime = proposed.F2BFindTime
 	s.cfgMu.Unlock()
 
+	// Update the live allowlist so new entries take effect immediately for
+	// auto-ban and manual-ban checks (entries were validated above).
+	if req.IgnoreIPs != nil && s.allowlist != nil {
+		if err := s.allowlist.SetExtra(proposed.ExtraIgnoreIPs); err != nil {
+			slog.Error("apply allowlist", "err", err)
+		}
+	}
+
 	// Swap dispatcher only if notify fields were included in this request.
-	if req.TelegramToken != nil || req.TelegramChat != nil ||
-		req.DiscordURL != nil || req.WebhookURL != nil || req.Rules != nil {
+	if notifyChanged {
 		s.swapDispatcher(d)
 	} else {
 		d.Stop() // nil-safe; discard the unused validation dispatcher

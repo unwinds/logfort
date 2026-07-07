@@ -558,6 +558,23 @@ func (s *SQLiteStore) GetAllSettings(ctx context.Context) (map[string]string, er
 	return m, rows.Err()
 }
 
+// Ping verifies the database answers queries — a cheap end-to-end probe for
+// the health endpoint (sql.DB.Ping alone may not touch SQLite at all).
+func (s *SQLiteStore) Ping(ctx context.Context) error {
+	var one int
+	return s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one)
+}
+
+// Backup writes a consistent snapshot of the database to dstPath using
+// VACUUM INTO. The snapshot is taken at a single point in time and is safe
+// to run while the pipeline keeps writing; the destination must not exist.
+func (s *SQLiteStore) Backup(ctx context.Context, dstPath string) error {
+	if _, err := s.db.ExecContext(ctx, "VACUUM INTO ?", dstPath); err != nil {
+		return fmt.Errorf("vacuum into %q: %w", dstPath, err)
+	}
+	return nil
+}
+
 // Close updates query-planner statistics and closes the database.
 func (s *SQLiteStore) Close() error {
 	_, _ = s.db.Exec("PRAGMA optimize")
@@ -581,6 +598,10 @@ func buildEventWhere(q EventQuery) (string, []any) {
 	if q.Country != "" {
 		conds = append(conds, "country = ?")
 		args = append(args, q.Country)
+	}
+	if q.Username != "" {
+		conds = append(conds, "username = ?")
+		args = append(args, q.Username)
 	}
 	if q.Since != nil {
 		conds = append(conds, "ts >= ?")

@@ -19,14 +19,16 @@ LogFort watches your auth logs and shows you a live browser dashboard: who is at
 - 🗺️ **Offline attack map** — Leaflet + embedded GeoJSON, no external tile servers required
 - 📊 **Stats & timeline** — top attacker IPs, usernames, countries; hourly/daily bar chart
 - 🚫 **One-click banning** — active block via nftables or fail2ban, with full ban/unban history
-- 🔔 **Notifications** — Telegram, Discord, or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`
-- 📋 **Events browser** — pagination, type/IP filters, one-click CSV export
+- 🔔 **Notifications** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP), or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`
+- 📋 **Events browser** — pagination, type/IP/username filters, clickable IPs, one-click CSV export
 - 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, `fail2ban.log`, systemd journal
 - 🔒 **HTTP Basic Auth** — optional, protects all routes except `/api/health`
 - 🛡️ **Privacy-first** — zero outbound requests at runtime; GeoIP is a local `.mmdb` file
 - 🤖 **Auto-ban** — automatically ban IPs that exceed a configurable threshold (events per time window); toggle and tune via the Settings UI without restart
-- ⚙️ **Runtime settings UI** — configure notifications, auto-ban, and data retention in the browser, no restart needed
-- 📈 **Prometheus metrics** — `/metrics` endpoint with parsed/unparsed counters and active-ban gauge
+- ⚙️ **Runtime settings UI** — configure notifications, auto-ban, allowlist, and data retention in the browser, no restart needed
+- 🛟 **One-click backup** — download a consistent SQLite snapshot from Settings → General at any time
+- ✅ **Allowlist** — protect your home/office IPs from ever being banned, editable live from the UI
+- 📈 **Prometheus metrics** — `/metrics` endpoint with parse counters, active-ban / SSE-client / DB-size gauges
 
 ---
 
@@ -159,9 +161,16 @@ With the fail2ban socket mounted (`- /var/run/fail2ban:/var/run/fail2ban` + `use
 | `LOGFORT_NOTIFY_WEBHOOK_URL` | _(empty)_ | Generic webhook (POST JSON) |
 | `LOGFORT_NOTIFY_TELEGRAM_TOKEN` / `_CHAT_ID` | _(empty)_ | Telegram bot |
 | `LOGFORT_NOTIFY_DISCORD_URL` | _(empty)_ | Discord webhook |
+| `LOGFORT_NOTIFY_SLACK_URL` | _(empty)_ | Slack incoming webhook |
+| `LOGFORT_NOTIFY_NTFY_URL` | _(empty)_ | ntfy topic URL (e.g. `https://ntfy.sh/my-topic`) |
+| `LOGFORT_NOTIFY_NTFY_TOKEN` | _(empty)_ | ntfy access token (optional, for protected topics) |
+| `LOGFORT_NOTIFY_GOTIFY_URL` / `_TOKEN` | _(empty)_ | Gotify server URL + app token (both required) |
+| `LOGFORT_NOTIFY_SMTP_HOST` | _(empty)_ | SMTP server `host:port` (465 = implicit TLS, otherwise STARTTLS) |
+| `LOGFORT_NOTIFY_SMTP_USER` / `_PASS` | _(empty)_ | SMTP credentials (optional for open relays) |
+| `LOGFORT_NOTIFY_SMTP_FROM` / `_TO` | _(empty)_ | Sender and comma-separated recipients (both required) |
 | `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `threshold:N/dur` |
 
-Env vars always override values saved via the UI.
+Every channel can also be configured at runtime in **Settings → Notifications** — no env vars or restart needed. Env vars always override values saved via the UI (the UI shows such fields as locked).
 
 ---
 
@@ -169,13 +178,15 @@ Env vars always override values saved via the UI.
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/health` | Status, version, uptime, parse counters (never requires auth) |
+| `GET /api/health` | Status, version, uptime, parse counters, DB probe — returns 503 when the DB is unhealthy (never requires auth) |
 | `GET /api/stats?window=24h` | Aggregates + timeline (`1h\|6h\|24h\|7d\|30d\|all`) |
-| `GET /api/events` | Filterable event list (`type`, `ip`, `country`, `since`, `until`, `limit`, `offset`) |
+| `GET /api/events` | Filterable event list (`type`, `ip`, `user`, `country`, `since`, `until`, `limit`, `offset`) |
 | `GET /api/events.csv` | Same filters, CSV download (up to 10 000 rows) |
 | `GET /api/bans?active=true` | Ban history |
+| `GET /api/bans.csv` | Ban history as CSV download |
 | `GET /api/map?window=24h` | Geo-aggregated attack points |
 | `GET /api/stream` | Live events via Server-Sent Events |
+| `GET /api/backup` | Consistent point-in-time SQLite snapshot (download) |
 | `GET /metrics` | Prometheus text format (respects basic auth) |
 | `POST /api/ban` / `POST /api/unban` | Manual banning (requires responder) |
 

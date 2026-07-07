@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ type mockStore struct {
 	bannedIPs   []string
 	unbannedIPs []string
 	saved       map[string]string // records SetSettings writes
+	pingErr     error             // returned by Ping (health db probe)
 }
 
 func (m *mockStore) InsertEvent(_ context.Context, _ *parse.Event) error { return nil }
@@ -67,7 +69,12 @@ func (m *mockStore) SetSettings(_ context.Context, pairs map[string]string) erro
 	return nil
 }
 func (m *mockStore) GetAllSettings(_ context.Context) (map[string]string, error) { return nil, nil }
-func (m *mockStore) Close() error                                                { return nil }
+func (m *mockStore) Ping(_ context.Context) error                                { return m.pingErr }
+func (m *mockStore) Backup(_ context.Context, dstPath string) error {
+	// Simulate VACUUM INTO: write a small fake snapshot to dstPath.
+	return os.WriteFile(dstPath, []byte("SQLite format 3\x00fake-backup"), 0o600)
+}
+func (m *mockStore) Close() error { return nil }
 
 // mockResponder tracks ban/unban calls.
 type mockResponder struct {

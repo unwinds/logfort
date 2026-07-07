@@ -40,8 +40,23 @@ type Config struct {
 	NotifyTelegramToken string
 	NotifyTelegramChat  string
 	NotifyDiscordURL    string
+	NotifySlackURL      string
+	NotifyNtfyURL       string
+	NotifyNtfyToken     string
+	NotifyGotifyURL     string
+	NotifyGotifyToken   string
+	NotifySMTPHost      string // "host:port"
+	NotifySMTPUser      string
+	NotifySMTPPass      string
+	NotifySMTPFrom      string
+	NotifySMTPTo        string // comma-separated recipients
 	NotifyRules         []string
 	LogLevel            slog.Level
+
+	// ExtraIgnoreIPs holds allowlist entries added from the settings UI
+	// (persisted in the DB, key "security.ignore_ips"). They are unioned with
+	// IgnoreIPs at runtime — env/default entries can never be removed via UI.
+	ExtraIgnoreIPs []string
 
 	// UI-configurable settings (persisted in DB; no env vars)
 	AutoBanEnabled   bool
@@ -72,6 +87,16 @@ func Load() (*Config, error) {
 		NotifyTelegramToken: getEnv("LOGFORT_NOTIFY_TELEGRAM_TOKEN", ""),
 		NotifyTelegramChat:  getEnv("LOGFORT_NOTIFY_TELEGRAM_CHAT_ID", ""),
 		NotifyDiscordURL:    getEnv("LOGFORT_NOTIFY_DISCORD_URL", ""),
+		NotifySlackURL:      getEnv("LOGFORT_NOTIFY_SLACK_URL", ""),
+		NotifyNtfyURL:       getEnv("LOGFORT_NOTIFY_NTFY_URL", ""),
+		NotifyNtfyToken:     getEnv("LOGFORT_NOTIFY_NTFY_TOKEN", ""),
+		NotifyGotifyURL:     getEnv("LOGFORT_NOTIFY_GOTIFY_URL", ""),
+		NotifyGotifyToken:   getEnv("LOGFORT_NOTIFY_GOTIFY_TOKEN", ""),
+		NotifySMTPHost:      getEnv("LOGFORT_NOTIFY_SMTP_HOST", ""),
+		NotifySMTPUser:      getEnv("LOGFORT_NOTIFY_SMTP_USER", ""),
+		NotifySMTPPass:      getEnv("LOGFORT_NOTIFY_SMTP_PASS", ""),
+		NotifySMTPFrom:      getEnv("LOGFORT_NOTIFY_SMTP_FROM", ""),
+		NotifySMTPTo:        getEnv("LOGFORT_NOTIFY_SMTP_TO", ""),
 		// UI-only settings get sane defaults here so a failed DB overlay
 		// (e.g. transient read error at startup) never leaves zero values.
 		AutoBanThreshold: DefaultAutoBanThreshold,
@@ -156,31 +181,56 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// OverlaySettings fills in empty notify fields from a key-value map (e.g. from
-// the DB settings table). Env-var-set values (already non-empty) take priority.
-// UI-only settings (autoban, retention) are always overlaid from the DB.
-func (c *Config) OverlaySettings(s map[string]string) {
-	if c.NotifyTelegramToken == "" {
-		c.NotifyTelegramToken = s["notify.telegram.token"]
+// NotifySettingKeys maps DB settings keys to the corresponding Config string
+// field for every UI-configurable notification channel. Used by
+// OverlaySettings and by the settings API so the two can never disagree on
+// which keys exist.
+func (c *Config) NotifySettingKeys() map[string]*string {
+	return map[string]*string{
+		"notify.telegram.token":   &c.NotifyTelegramToken,
+		"notify.telegram.chat_id": &c.NotifyTelegramChat,
+		"notify.discord.url":      &c.NotifyDiscordURL,
+		"notify.webhook.url":      &c.NotifyWebhookURL,
+		"notify.slack.url":        &c.NotifySlackURL,
+		"notify.ntfy.url":         &c.NotifyNtfyURL,
+		"notify.ntfy.token":       &c.NotifyNtfyToken,
+		"notify.gotify.url":       &c.NotifyGotifyURL,
+		"notify.gotify.token":     &c.NotifyGotifyToken,
+		"notify.smtp.host":        &c.NotifySMTPHost,
+		"notify.smtp.user":        &c.NotifySMTPUser,
+		"notify.smtp.pass":        &c.NotifySMTPPass,
+		"notify.smtp.from":        &c.NotifySMTPFrom,
+		"notify.smtp.to":          &c.NotifySMTPTo,
 	}
-	if c.NotifyTelegramChat == "" {
-		c.NotifyTelegramChat = s["notify.telegram.chat_id"]
-	}
-	if c.NotifyDiscordURL == "" {
-		c.NotifyDiscordURL = s["notify.discord.url"]
-	}
-	if c.NotifyWebhookURL == "" {
-		c.NotifyWebhookURL = s["notify.webhook.url"]
-	}
-	if len(c.NotifyRules) == 0 {
-		if raw := s["notify.rules"]; raw != "" {
-			for _, r := range strings.Split(raw, ",") {
-				if r = strings.TrimSpace(r); r != "" {
-					c.NotifyRules = append(c.NotifyRules, r)
-				}
-			}
+}
+
+// SplitList splits a comma-separated string into trimmed, non-empty entries.
+func SplitList(raw string) []string {
+	var out []string
+	for _, e := range strings.Split(raw, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out = append(out, e)
 		}
 	}
+	return out
+}
+
+// OverlaySettings fills in empty notify fields from a key-value map (e.g. from
+// the DB settings table). Env-var-set values (already non-empty) take priority.
+// UI-only settings (autoban, retention, extra allowlist) are always overlaid
+// from the DB.
+func (c *Config) OverlaySettings(s map[string]string) {
+	for key, field := range c.NotifySettingKeys() {
+		if *field == "" {
+			*field = s[key]
+		}
+	}
+	if len(c.NotifyRules) == 0 {
+		c.NotifyRules = SplitList(s["notify.rules"])
+	}
+
+	// Extra allowlist entries — purely UI-controlled, always overlay from DB.
+	c.ExtraIgnoreIPs = SplitList(s["security.ignore_ips"])
 
 	// Retention days — DB wins if set (UI override of env default).
 	if v := s["general.retention_days"]; v != "" {

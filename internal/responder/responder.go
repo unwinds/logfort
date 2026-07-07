@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync"
 
 	"github.com/unwinds/logfort/internal/config"
 )
@@ -48,9 +49,16 @@ func New(cfg *config.Config) (Responder, *Allowlist, error) {
 }
 
 // Allowlist holds CIDRs and individual IPs that must never be banned.
+// The base set comes from LOGFORT_IGNORE_IPS at startup and is immutable;
+// extra entries can be swapped at runtime from the settings UI. All methods
+// are safe for concurrent use.
 type Allowlist struct {
 	nets []*net.IPNet
 	ips  []net.IP
+
+	mu        sync.RWMutex
+	extraNets []*net.IPNet
+	extraIPs  []net.IP
 }
 
 // ParseAllowlist parses CIDR ranges and individual IP addresses.
@@ -68,6 +76,19 @@ func ParseAllowlist(entries []string) (*Allowlist, error) {
 	return al, nil
 }
 
+// SetExtra replaces the runtime-added allowlist entries (settings UI).
+// Invalid entries return an error and leave the previous extra set intact.
+func (al *Allowlist) SetExtra(entries []string) error {
+	parsed, err := ParseAllowlist(entries)
+	if err != nil {
+		return err
+	}
+	al.mu.Lock()
+	al.extraNets, al.extraIPs = parsed.nets, parsed.ips
+	al.mu.Unlock()
+	return nil
+}
+
 // Contains reports whether the given IP string is in the allowlist.
 func (al *Allowlist) Contains(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
@@ -80,6 +101,18 @@ func (al *Allowlist) Contains(ipStr string) bool {
 		}
 	}
 	for _, a := range al.ips {
+		if a.Equal(ip) {
+			return true
+		}
+	}
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	for _, n := range al.extraNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	for _, a := range al.extraIPs {
 		if a.Equal(ip) {
 			return true
 		}

@@ -83,6 +83,8 @@ func (s *stubStore) GetSetting(_ context.Context, _ string) (string, bool, error
 func (s *stubStore) SetSetting(_ context.Context, _, _ string) error             { return nil }
 func (s *stubStore) SetSettings(_ context.Context, _ map[string]string) error    { return nil }
 func (s *stubStore) GetAllSettings(_ context.Context) (map[string]string, error) { return nil, nil }
+func (s *stubStore) Ping(_ context.Context) error                                { return nil }
+func (s *stubStore) Backup(_ context.Context, _ string) error                    { return nil }
 func (s *stubStore) Close() error                                                { return nil }
 
 const sshFail = "Jun 21 14:32:01 myhost sshd[12345]: Failed password for invalid user admin from 203.0.113.5 port 54321 ssh2"

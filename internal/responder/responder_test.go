@@ -47,6 +47,44 @@ func TestAllowlistInvalidEntry(t *testing.T) {
 	}
 }
 
+func TestAllowlistSetExtra(t *testing.T) {
+	al, err := responder.ParseAllowlist([]string{"10.0.0.0/8"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if al.Contains("203.0.113.5") {
+		t.Fatal("203.0.113.5 must not be allowlisted yet")
+	}
+
+	if err := al.SetExtra([]string{"203.0.113.5", "198.51.100.0/24"}); err != nil {
+		t.Fatalf("SetExtra: %v", err)
+	}
+	for _, ip := range []string{"203.0.113.5", "198.51.100.77", "10.1.2.3"} {
+		if !al.Contains(ip) {
+			t.Errorf("Contains(%q) = false after SetExtra", ip)
+		}
+	}
+
+	// Invalid entries must be rejected and leave the previous extra set intact.
+	if err := al.SetExtra([]string{"bogus"}); err == nil {
+		t.Error("want error for invalid extra entry")
+	}
+	if !al.Contains("203.0.113.5") {
+		t.Error("failed SetExtra must not clear previous extra entries")
+	}
+
+	// Replacing the extra set drops entries not in the new set.
+	if err := al.SetExtra([]string{"192.0.2.1"}); err != nil {
+		t.Fatalf("SetExtra: %v", err)
+	}
+	if al.Contains("203.0.113.5") {
+		t.Error("old extra entry must be gone after replacement")
+	}
+	if !al.Contains("192.0.2.1") || !al.Contains("10.1.2.3") {
+		t.Error("new extra entry and base entries must remain")
+	}
+}
+
 func TestIsPrivate(t *testing.T) {
 	private := []string{"127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.0.1", "::1", "fe80::1"}
 	for _, ip := range private {
