@@ -20,17 +20,20 @@ LogFort watches your auth logs and shows you a live browser dashboard: who is at
 - 🔴 **Live event feed** — failed and accepted logins stream instantly via SSE, no polling
 - 🗺️ **Offline attack map** — Leaflet + embedded GeoJSON, no external tile servers required
 - 📊 **Stats & timeline** — top attacker IPs, usernames, countries; hourly/daily bar chart
-- 🚫 **One-click banning** — active block via nftables or fail2ban, with full ban/unban history
-- 🔔 **Notifications** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP), or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`
+- 🚫 **One-click banning** — active block via nftables or fail2ban, with full ban/unban history and **optional expiry** (1 hour … 30 days or permanent); expired bans are lifted automatically
+- 🔔 **Notifications** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP), or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`, `digest:daily`, `digest:weekly`
+- 📰 **Daily / weekly digests** — a morning summary of attempts, top attackers, and bans, delivered to any notification channel
 - 📋 **Events browser** — pagination, type/IP/username filters, clickable IPs, one-click CSV export
-- 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, `fail2ban.log`, systemd journal
+- 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, **Postfix SASL** + **Dovecot** mail auth, `fail2ban.log`, systemd journal
 - 🔒 **HTTP Basic Auth** — optional, protects all routes except `/api/health`
-- 🛡️ **Privacy-first** — zero outbound requests at runtime; GeoIP is a local `.mmdb` file
-- 🤖 **Auto-ban** — automatically ban IPs that exceed a configurable threshold (events per time window); toggle and tune via the Settings UI without restart
+- 🛡️ **Privacy-first** — zero outbound requests at runtime; GeoIP and ASN lookups are local `.mmdb` files
+- 🤖 **Auto-ban** — automatically ban IPs that exceed a configurable threshold; bans expire after a configurable duration (default 24 h) so dynamic attacker IPs don't poison the blocklist forever
+- 🏢 **ASN enrichment** — see which network operator an attack comes from, still fully offline
 - ⚙️ **Runtime settings UI** — configure notifications, auto-ban, allowlist, and data retention in the browser, no restart needed
 - 🛟 **One-click backup** — download a consistent SQLite snapshot from Settings → General at any time
 - ✅ **Allowlist** — protect your home/office IPs from ever being banned, editable live from the UI
-- 📈 **Prometheus metrics** — `/metrics` endpoint with parse counters, active-ban / SSE-client / DB-size gauges
+- 📈 **Prometheus metrics** — `/metrics` endpoint with parse counters, active-ban / SSE-client / DB-size gauges, plus a ready-made [Grafana dashboard](docs/grafana-dashboard.json)
+- 🎬 **Demo mode** — `LOGFORT_DEMO=true` fills the dashboard with realistic synthetic traffic, no server required
 
 ---
 
@@ -44,10 +47,14 @@ The script:
 - Detects your distro (Debian/Ubuntu/RHEL/Rocky/Alma)
 - Optionally installs Docker and fail2ban, and tunes the sshd jail with **exact attempt counting** — you choose attempts-before-ban and ban duration, and the values are verified after restart (the stock fail2ban filter counts extra log lines, banning after 2 of "3" attempts; LogFort ships a corrected filter)
 - Optionally enables **fail2ban control from the web UI** (ban/unban IPs, change attempts/ban duration in Settings → Firewall)
+- Lets you choose **Docker** (recommended) or **bare-metal** install (release binary + systemd unit — no Docker needed)
 - Lets you choose **file** backend (auth.log) or **journald** backend (systemd journal)
 - Auto-detects your auth log path and sets up container access to it (log group / rotation-safe directory mount)
-- Generates a ready-to-run `docker-compose.yml`
-- Optionally pulls the image and starts the container
+- Offers free GeoIP + ASN database downloads (DB-IP Lite, no account needed)
+- Generates a ready-to-run `docker-compose.yml` (or `logfort.env` + systemd unit)
+- Optionally pulls the image and starts the container / service
+
+To remove everything later: `sudo bash install.sh --uninstall`
 
 > **Flags:** `--dir /opt/logfort` and `--image ghcr.io/unwinds/logfort:latest`
 
@@ -68,17 +75,19 @@ cd /opt/logfort && docker compose pull && docker compose up -d
 
 ---
 
-## GeoIP (optional, recommended)
+## GeoIP & ASN (optional, recommended)
 
-Download a free [DB-IP Lite](https://db-ip.com/db/lite/city) database for the attack map — no account required:
+Download free [DB-IP Lite](https://db-ip.com/db/lite/city) databases — no account required. City powers the attack map; ASN shows which network operator each attack comes from:
 
 ```bash
 curl -L "https://download.db-ip.com/free/dbip-city-lite-$(date +%Y-%m).mmdb.gz" \
   | gunzip > /opt/logfort/data/geo.mmdb
+curl -L "https://download.db-ip.com/free/dbip-asn-lite-$(date +%Y-%m).mmdb.gz" \
+  | gunzip > /opt/logfort/data/asn.mmdb
 docker compose -f /opt/logfort/docker-compose.yml restart
 ```
 
-Also supports MaxMind GeoLite2 City (same mmdb format).
+Also supports MaxMind GeoLite2 City / GeoLite2 ASN (same mmdb format). All lookups stay on your machine — nothing is ever sent out.
 
 ---
 
@@ -130,10 +139,12 @@ All settings are environment variables. Notification settings can also be change
 | `LOGFORT_JOURNALD_UNIT` | `ssh.service` | systemd unit to follow (journald backend only) |
 | `LOGFORT_FAIL2BAN_LOG` | _(empty)_ | Optional fail2ban log — replayed from the beginning on each start |
 | `LOGFORT_DB_PATH` | `/data/logfort.db` | SQLite database path |
-| `LOGFORT_GEOIP_DB` | `/data/geo.mmdb` | GeoIP mmdb path; silently skipped if missing |
+| `LOGFORT_GEOIP_DB` | `/data/geo.mmdb` | GeoIP City mmdb path; silently skipped if missing |
+| `LOGFORT_ASN_DB` | `/data/asn.mmdb` | ASN mmdb path (DB-IP ASN Lite / GeoLite2-ASN); silently skipped if missing |
 | `LOGFORT_RETENTION_DAYS` | `90` | Purge events older than N days |
 | `LOGFORT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOGFORT_HOME_LAT` / `_LON` | _(empty)_ | Optional home-marker coordinates on the attack map |
+| `LOGFORT_DEMO` | `false` | Demo mode: synthetic traffic instead of real logs (never use in production) |
 
 ### Authentication
 
@@ -170,7 +181,7 @@ With the fail2ban socket mounted (`- /var/run/fail2ban:/var/run/fail2ban` + `use
 | `LOGFORT_NOTIFY_SMTP_HOST` | _(empty)_ | SMTP server `host:port` (465 = implicit TLS, otherwise STARTTLS) |
 | `LOGFORT_NOTIFY_SMTP_USER` / `_PASS` | _(empty)_ | SMTP credentials (optional for open relays) |
 | `LOGFORT_NOTIFY_SMTP_FROM` / `_TO` | _(empty)_ | Sender and comma-separated recipients (both required) |
-| `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `threshold:N/dur` |
+| `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`, `digest:daily`, `digest:weekly` |
 
 Every channel can also be configured at runtime in **Settings → Notifications** — no env vars or restart needed. Env vars always override values saved via the UI (the UI shows such fields as locked).
 
@@ -189,8 +200,8 @@ Every channel can also be configured at runtime in **Settings → Notifications*
 | `GET /api/map?window=24h` | Geo-aggregated attack points |
 | `GET /api/stream` | Live events via Server-Sent Events |
 | `GET /api/backup` | Consistent point-in-time SQLite snapshot (download) |
-| `GET /metrics` | Prometheus text format (respects basic auth) |
-| `POST /api/ban` / `POST /api/unban` | Manual banning (requires responder) |
+| `GET /metrics` | Prometheus text format (respects basic auth); [Grafana dashboard](docs/grafana-dashboard.json) included |
+| `POST /api/ban` / `POST /api/unban` | Manual banning (requires responder); `duration_secs` sets an optional ban TTL (0 = permanent) |
 
 ---
 
@@ -201,8 +212,12 @@ Every channel can also be configured at runtime in **Settings → Notifications*
 | sshd (`auth.log`, `secure`, OpenSSH 9+ `sshd-session`) | syslog/RFC3339 prefix + `proc=sshd` |
 | nginx `error.log` | `YYYY/MM/DD HH:MM:SS [` prefix |
 | nginx `access.log` | `IP - user [ts]` format, 401 responses only |
+| Postfix (`mail.log`) | `proc=postfix/smtpd`, SASL authentication failures |
+| Dovecot (`mail.log`) | `proc=dovecot`, imap/pop3-login auth failures |
 | fail2ban | `YYYY-MM-DD HH:MM:SS,ms fail2ban` prefix |
 | systemd journal | `LOGFORT_BACKEND=journald` |
+
+All sources are detected per line — point `LOGFORT_LOG_PATHS` at any mix of files (e.g. `/host/log/auth.log,/host/log/mail.log`).
 
 **Typical auth log paths:**
 
@@ -264,6 +279,12 @@ go test -race ./...
 # Run locally against test fixture
 LOGFORT_LOG_PATHS=$(pwd)/testdata/auth_debian.log \
 LOGFORT_DB_PATH=/tmp/logfort-dev.db \
+LOGFORT_LISTEN=127.0.0.1:8080 \
+go run ./cmd/logfort
+
+# Or explore the full dashboard with synthetic traffic (no logs needed)
+LOGFORT_DEMO=true \
+LOGFORT_DB_PATH=/tmp/logfort-demo.db \
 LOGFORT_LISTEN=127.0.0.1:8080 \
 go run ./cmd/logfort
 

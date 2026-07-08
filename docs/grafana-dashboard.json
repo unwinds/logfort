@@ -1,0 +1,150 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource scraping LogFort /metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "title": "LogFort",
+  "uid": "logfort",
+  "tags": ["logfort", "security", "ssh"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "logfort_uptime_seconds", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "fixed", "fixedColor": "green" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Active bans",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "logfort_bans_active", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Database size",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "logfort_db_size_bytes", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "blue" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Live dashboard viewers (SSE)",
+      "id": 4,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "logfort_sse_clients", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Log lines parsed / unparsed (per second)",
+      "id": 5,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(logfort_lines_parsed_total[5m])", "legendFormat": "parsed", "refId": "A" },
+        { "expr": "rate(logfort_lines_unparsed_total[5m])", "legendFormat": "unparsed", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 12, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "unparsed" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Active bans over time",
+      "id": 6,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "logfort_bans_active", "legendFormat": "active bans", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 12, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Database growth",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "logfort_db_size_bytes", "legendFormat": "db size", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "drawStyle": "line", "fillOpacity": 12, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Attack volume (parsed lines per hour)",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "increase(logfort_lines_parsed_total[1h])", "legendFormat": "events/hour", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
