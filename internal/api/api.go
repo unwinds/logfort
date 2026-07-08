@@ -856,14 +856,14 @@ func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.RLock()
 	resp := map[string]any{
-		"rules":             strings.Join(s.cfg.NotifyRules, ","),
-		"retention_days":    s.cfg.RetentionDays,
+		"rules":                strings.Join(s.cfg.NotifyRules, ","),
+		"retention_days":       s.cfg.RetentionDays,
 		"autoban_enabled":      s.cfg.AutoBanEnabled,
 		"autoban_threshold":    s.cfg.AutoBanThreshold,
 		"autoban_window":       s.cfg.AutoBanWindow,
 		"autoban_bantime_secs": s.cfg.AutoBanBanTime,
-		"ignore_ips":        strings.Join(s.cfg.ExtraIgnoreIPs, ", "),
-		"ignore_ips_base":   append([]string{}, s.cfg.IgnoreIPs...),
+		"ignore_ips":           strings.Join(s.cfg.ExtraIgnoreIPs, ", "),
+		"ignore_ips_base":      append([]string{}, s.cfg.IgnoreIPs...),
 	}
 	cfgKeys := s.cfg.NotifySettingKeys()
 	for jsonKey, dbKey := range notifySettingJSONKeys {
