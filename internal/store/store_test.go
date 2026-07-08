@@ -298,7 +298,7 @@ func TestRetention_PrunesInactiveBans(t *testing.T) {
 	s := newTestStore(t)
 
 	// Old active ban, old inactive ban, recent inactive ban.
-	if err := s.BanIP(ctx, "1.1.1.1", "nftables", "keep: active"); err != nil {
+	if err := s.BanIP(ctx, "1.1.1.1", "nftables", "keep: active", 0); err != nil {
 		t.Fatal(err)
 	}
 	oldTS := time.Now().AddDate(0, 0, -100)
@@ -362,6 +362,60 @@ func TestBanTracking(t *testing.T) {
 	}
 }
 
+func TestListExpiredBans(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	now := time.Now()
+	// Permanent ban, expired ban, not-yet-expired ban.
+	if err := s.BanIP(ctx, "1.1.1.1", "nftables", "permanent", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BanIP(ctx, "2.2.2.2", "nftables", "expired", now.Add(-time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BanIP(ctx, "3.3.3.3", "nftables", "future", now.Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	expired, err := s.ListExpiredBans(ctx, now)
+	if err != nil {
+		t.Fatalf("ListExpiredBans: %v", err)
+	}
+	if len(expired) != 1 || expired[0].IP != "2.2.2.2" {
+		t.Fatalf("want only 2.2.2.2 expired, got %+v", expired)
+	}
+	if expired[0].ExpiresAt == nil {
+		t.Fatal("expired ban must carry expires_at")
+	}
+
+	// After the sweeper unbans it, it must not come back.
+	if err := s.UnbanIP(ctx, "2.2.2.2"); err != nil {
+		t.Fatalf("UnbanIP: %v", err)
+	}
+	expired, err = s.ListExpiredBans(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired) != 0 {
+		t.Fatalf("want no expired bans after unban, got %+v", expired)
+	}
+
+	// The permanent ban keeps a nil expires_at through ListBans.
+	active, err := s.ListBans(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range active {
+		if b.IP == "1.1.1.1" && b.ExpiresAt != nil {
+			t.Errorf("permanent ban must have nil expires_at, got %d", *b.ExpiresAt)
+		}
+		if b.IP == "3.3.3.3" && b.ExpiresAt == nil {
+			t.Error("TTL ban must have non-nil expires_at")
+		}
+	}
+}
+
 func TestInsertEvent_Dedup(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -386,7 +440,7 @@ func TestBanIPAndUnbanIP(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	if err := s.BanIP(ctx, "203.0.113.5", "nftables", "manual test"); err != nil {
+	if err := s.BanIP(ctx, "203.0.113.5", "nftables", "manual test", 0); err != nil {
 		t.Fatalf("BanIP: %v", err)
 	}
 

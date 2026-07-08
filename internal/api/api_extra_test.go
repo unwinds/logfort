@@ -60,6 +60,31 @@ func TestBackup_StreamsSnapshot(t *testing.T) {
 	}
 }
 
+func TestStatsCache_HeavyWindows(t *testing.T) {
+	srv, ms, _ := newTestServer(t, false)
+
+	// Heavy window: second request within the TTL is served from cache.
+	for i := 0; i < 3; i++ {
+		if w := getPath(t, srv, "/api/stats?window=30d"); w.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d", w.Code)
+		}
+	}
+	if ms.statsCalls != 1 {
+		t.Errorf("30d window: want 1 store call (cached), got %d", ms.statsCalls)
+	}
+
+	// Live window: never cached.
+	ms.statsCalls = 0
+	for i := 0; i < 3; i++ {
+		if w := getPath(t, srv, "/api/stats?window=24h"); w.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d", w.Code)
+		}
+	}
+	if ms.statsCalls != 3 {
+		t.Errorf("24h window: want 3 store calls (uncached), got %d", ms.statsCalls)
+	}
+}
+
 func TestBansCSV(t *testing.T) {
 	srv, _, _ := newTestServer(t, false)
 

@@ -72,8 +72,11 @@ func (s *stubStore) GetMapPoints(_ context.Context, _ string) ([]store.MapPoint,
 	return []store.MapPoint{}, nil
 }
 func (s *stubStore) DeleteOldEvents(_ context.Context, _ int) (int64, error) { return 0, nil }
-func (s *stubStore) BanIP(_ context.Context, _, _, _ string) error           { return nil }
+func (s *stubStore) BanIP(_ context.Context, _, _, _ string, _ int64) error  { return nil }
 func (s *stubStore) UnbanIP(_ context.Context, _ string) error               { return nil }
+func (s *stubStore) ListExpiredBans(_ context.Context, _ time.Time) ([]store.BanRow, error) {
+	return []store.BanRow{}, nil
+}
 func (s *stubStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }

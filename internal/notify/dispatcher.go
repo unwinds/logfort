@@ -64,6 +64,13 @@ func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
 		notifiers = append(notifiers,
 			NewEmail(smtpHost, strings.TrimSpace(cfg.NotifySMTPUser), cfg.NotifySMTPPass, smtpFrom, smtpTo))
 	}
+	// Rule syntax is validated even when no notifier is configured yet:
+	// otherwise the settings API would happily persist a broken rule string
+	// that turns into a startup failure the moment a notifier is added.
+	rules, digests, err := parseRules(cfg.NotifyRules)
+	if err != nil {
+		return nil, fmt.Errorf("notify rules: %w", err)
+	}
 	if len(notifiers) == 0 {
 		return nil, nil
 	}
@@ -71,12 +78,15 @@ func New(cfg *config.Config, st store.Store) (*Dispatcher, error) {
 		slog.Warn("notify: notifiers configured but LOGFORT_NOTIFY_RULES is empty — no alerts will fire")
 		return nil, nil
 	}
-	rules, err := parseRules(cfg.NotifyRules)
-	if err != nil {
-		return nil, fmt.Errorf("notify rules: %w", err)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Dispatcher{notifiers: notifiers, rules: rules, st: st, ctx: ctx, cancel: cancel, startedAt: time.Now()}, nil
+	d := &Dispatcher{notifiers: notifiers, rules: rules, st: st, ctx: ctx, cancel: cancel, startedAt: time.Now()}
+	// Digest schedules run for the lifetime of the dispatcher; Stop() (via
+	// ctx) terminates them, so a validation-only dispatcher that is stopped
+	// right away never fires.
+	for _, ds := range digests {
+		go d.runDigest(ds)
+	}
+	return d, nil
 }
 
 // Stop cancels all in-flight Notify goroutines. Safe to call on a nil Dispatcher.

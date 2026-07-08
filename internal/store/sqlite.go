@@ -211,7 +211,7 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 	countArgs := len(args)
 	args = append(args, limit, q.Offset)
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id,ts,ip,event_type,username,user_valid,auth_method,port,source,country,city,lat,lon FROM events"+
+		"SELECT id,ts,ip,event_type,username,user_valid,auth_method,port,source,country,city,lat,lon,asn FROM events"+
 			where+" ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?", args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query events: %w", err)
@@ -223,18 +223,19 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 	for rows.Next() {
 		var e EventRow
 		var userValid sql.NullInt64
-		var country, city, authMethod, username sql.NullString
+		var country, city, authMethod, username, asn sql.NullString
 		var lat, lon sql.NullFloat64
 		var port sql.NullInt64
 		if err := rows.Scan(&e.ID, &e.TS, &e.IP, &e.EventType,
 			&username, &userValid, &authMethod, &port,
-			&e.Source, &country, &city, &lat, &lon); err != nil {
+			&e.Source, &country, &city, &lat, &lon, &asn); err != nil {
 			return nil, 0, fmt.Errorf("scan event: %w", err)
 		}
 		e.Username = username.String
 		e.AuthMethod = authMethod.String
 		e.Country = country.String
 		e.City = city.String
+		e.ASN = asn.String
 		if port.Valid {
 			e.Port = int(port.Int64)
 		}
@@ -384,9 +385,36 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 	return st, nil
 }
 
+const banColumns = "id,ip,jail,banned_at,unbanned_at,expires_at,active,source,reason"
+
+// scanBans reads BanRow records from a query over banColumns.
+func scanBans(rows *sql.Rows) ([]BanRow, error) {
+	bans := []BanRow{}
+	for rows.Next() {
+		var b BanRow
+		var jail, reason sql.NullString
+		var unbannedAt, expiresAt sql.NullInt64
+		var active int64
+		if err := rows.Scan(&b.ID, &b.IP, &jail, &b.BannedAt, &unbannedAt, &expiresAt, &active, &b.Source, &reason); err != nil {
+			return nil, err
+		}
+		b.Jail = jail.String
+		b.Reason = reason.String
+		b.Active = active == 1
+		if unbannedAt.Valid {
+			b.UnbannedAt = &unbannedAt.Int64
+		}
+		if expiresAt.Valid {
+			b.ExpiresAt = &expiresAt.Int64
+		}
+		bans = append(bans, b)
+	}
+	return bans, rows.Err()
+}
+
 // ListBans returns ban records, optionally filtered to active ones.
 func (s *SQLiteStore) ListBans(ctx context.Context, activeOnly bool) ([]BanRow, error) {
-	query := "SELECT id,ip,jail,banned_at,unbanned_at,active,source,reason FROM bans"
+	query := "SELECT " + banColumns + " FROM bans"
 	if activeOnly {
 		query += " WHERE active=1"
 	}
@@ -397,25 +425,20 @@ func (s *SQLiteStore) ListBans(ctx context.Context, activeOnly bool) ([]BanRow, 
 		return nil, err
 	}
 	defer rows.Close()
+	return scanBans(rows)
+}
 
-	bans := []BanRow{}
-	for rows.Next() {
-		var b BanRow
-		var jail, reason sql.NullString
-		var unbannedAt sql.NullInt64
-		var active int64
-		if err := rows.Scan(&b.ID, &b.IP, &jail, &b.BannedAt, &unbannedAt, &active, &b.Source, &reason); err != nil {
-			return nil, err
-		}
-		b.Jail = jail.String
-		b.Reason = reason.String
-		b.Active = active == 1
-		if unbannedAt.Valid {
-			b.UnbannedAt = &unbannedAt.Int64
-		}
-		bans = append(bans, b)
+// ListExpiredBans returns active bans whose expiry has passed. Permanent bans
+// (NULL expires_at) are never returned.
+func (s *SQLiteStore) ListExpiredBans(ctx context.Context, now time.Time) ([]BanRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT "+banColumns+" FROM bans WHERE active=1 AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at",
+		now.Unix())
+	if err != nil {
+		return nil, err
 	}
-	return bans, rows.Err()
+	defer rows.Close()
+	return scanBans(rows)
 }
 
 // GetMapPoints returns geo-aggregated attack points for the map view.
@@ -470,12 +493,14 @@ func (s *SQLiteStore) DeleteOldEvents(ctx context.Context, retentionDays int) (i
 }
 
 // BanIP inserts a new ban record, skipping if an active ban for this IP exists.
-func (s *SQLiteStore) BanIP(ctx context.Context, ip, source, reason string) error {
+// expiresAt is a Unix timestamp after which the expiry sweeper lifts the ban;
+// 0 stores NULL (permanent).
+func (s *SQLiteStore) BanIP(ctx context.Context, ip, source, reason string, expiresAt int64) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO bans(ip, banned_at, active, source, reason)
-		SELECT ?, ?, 1, ?, ?
+		INSERT INTO bans(ip, banned_at, active, source, reason, expires_at)
+		SELECT ?, ?, 1, ?, ?, ?
 		WHERE NOT EXISTS (SELECT 1 FROM bans WHERE ip=? AND active=1)`,
-		ip, time.Now().Unix(), source, nullStr(reason), ip,
+		ip, time.Now().Unix(), source, nullStr(reason), nullInt64(expiresAt), ip,
 	)
 	return err
 }
@@ -499,7 +524,7 @@ func (s *SQLiteStore) UnbanIP(ctx context.Context, ip string) error {
 func (s *SQLiteStore) CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type IN ('failed_password','http_auth_fail','max_auth')",
+		"SELECT COUNT(*) FROM events WHERE ip=? AND ts>=? AND event_type IN ('failed_password','http_auth_fail','mail_auth_fail','max_auth')",
 		ip, since.Unix(),
 	).Scan(&count)
 	return count, err
@@ -673,6 +698,13 @@ func nullStr(s string) any {
 }
 
 func nullInt(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+func nullInt64(v int64) any {
 	if v == 0 {
 		return nil
 	}

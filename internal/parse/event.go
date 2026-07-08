@@ -16,12 +16,12 @@ type GeoInfo struct {
 type Event struct {
 	TS         time.Time // UTC
 	IP         string
-	EventType  string // failed_password|invalid_user|accepted|max_auth|disconnect_preauth|pam_failure|ban|unban
+	EventType  string // failed_password|invalid_user|accepted|max_auth|disconnect_preauth|pam_failure|http_auth_fail|mail_auth_fail|ban|unban
 	Username   string
 	UserValid  *bool  // nil if unknown
 	AuthMethod string // password|publickey|""
 	Port       int
-	Source     string // sshd|fail2ban|nginx
+	Source     string // sshd|fail2ban|nginx|dovecot|postfix
 	Geo        GeoInfo
 	Raw        string
 }

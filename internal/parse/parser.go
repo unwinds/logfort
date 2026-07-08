@@ -12,11 +12,12 @@ import (
 // ErrNoMatch is returned when a log line does not match any known pattern.
 var ErrNoMatch = errors.New("no matching pattern")
 
-// Syslog traditional format: "Jun 21 14:32:01 hostname sshd[12345]: message"
-var reSyslogPrefix = regexp.MustCompile(`^(?P<ts>\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(?P<host>\S+)\s+(?P<proc>\w+(?:-\w+)*)(?:\[(?P<pid>\d+)\])?:\s*(?P<msg>.*)$`)
+// Syslog traditional format: "Jun 21 14:32:01 hostname sshd[12345]: message".
+// The proc group also allows slashes for postfix's "postfix/smtpd" style names.
+var reSyslogPrefix = regexp.MustCompile(`^(?P<ts>\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(?P<host>\S+)\s+(?P<proc>\w+(?:[-/]\w+)*)(?:\[(?P<pid>\d+)\])?:\s*(?P<msg>.*)$`)
 
 // RFC3339 prefix: "2024-06-21T14:32:01+00:00 hostname sshd[12345]: message"
-var reRFC3339Prefix = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+(?P<host>\S+)\s+(?P<proc>\w+(?:-\w+)*)(?:\[(?P<pid>\d+)\])?:\s*(?P<msg>.*)$`)
+var reRFC3339Prefix = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+(?P<host>\S+)\s+(?P<proc>\w+(?:[-/]\w+)*)(?:\[(?P<pid>\d+)\])?:\s*(?P<msg>.*)$`)
 
 type eventPattern struct {
 	typ string
@@ -52,6 +53,21 @@ var sshdPatterns = []eventPattern{
 		re:  regexp.MustCompile(`pam_unix\(sshd:auth\): authentication failure;.*?rhost=(?P<ip>[0-9a-fA-F:.]+)(?:\s+user=(?P<user>\S+))?`),
 	},
 }
+
+// dovecotPattern matches dovecot login-process auth failures:
+//
+//	imap-login: Disconnected: Connection closed (auth failed, 1 attempts in 2 secs): user=<admin>, method=PLAIN, rip=203.0.113.5, lip=...
+//	pop3-login: Aborted login (auth failed, 3 attempts in 10 secs): user=<test>, method=PLAIN, rip=203.0.113.5, ...
+//
+// Lines without "(auth failed" (e.g. "no auth attempts" scanner probes) are
+// deliberately not matched — nobody typed a wrong password.
+var dovecotPattern = regexp.MustCompile(`^(?:imap|pop3|submission|managesieve)-login: .*\(auth failed, \d+ attempts[^)]*\): user=<(?P<user>[^>]*)>.*rip=(?P<ip>[0-9a-fA-F:.]+)`)
+
+// postfixPattern matches postfix/smtpd SASL authentication failures:
+//
+//	warning: unknown[203.0.113.5]: SASL LOGIN authentication failed: authentication failure
+//	warning: host.example.com[203.0.113.5]: SASL PLAIN authentication failed: ..., sasl_username=admin@example.com
+var postfixPattern = regexp.MustCompile(`^warning: \S*\[(?P<ip>[0-9a-fA-F:.]+)\]: SASL \S+ authentication failed(?::.*?)?(?:, sasl_username=(?P<user>\S+))?$`)
 
 // fail2banPattern matches fail2ban log lines.
 var fail2banPattern = regexp.MustCompile(`\[(?P<jail>[^\]]+)\]\s+(?P<action>Ban|Unban)\s+(?P<ip>[0-9a-fA-F:.]+)`)
@@ -152,10 +168,12 @@ func ParseLine(line string) (*Event, error) {
 		return parseNginxAccessLine(line)
 	}
 
-	return parseSSHDLine(line)
+	return parseSyslogLine(line)
 }
 
-func parseSSHDLine(line string) (*Event, error) {
+// parseSyslogLine handles syslog/RFC3339-prefixed lines and dispatches on the
+// logging process: sshd, dovecot login processes, or postfix smtpd.
+func parseSyslogLine(line string) (*Event, error) {
 	var ts time.Time
 	var msg, proc string
 
@@ -177,10 +195,37 @@ func parseSSHDLine(line string) (*Event, error) {
 		return nil, ErrNoMatch
 	}
 
-	if proc != "sshd" && proc != "sshd-session" {
+	switch {
+	case proc == "sshd" || proc == "sshd-session":
+		return parseSSHDMessage(ts, msg, line)
+	case proc == "dovecot":
+		return parseMailMessage(ts, msg, line, dovecotPattern, "dovecot")
+	case strings.HasPrefix(proc, "postfix") && strings.HasSuffix(proc, "smtpd"):
+		// "postfix/smtpd" and multi-instance "postfix/submission/smtpd".
+		return parseMailMessage(ts, msg, line, postfixPattern, "postfix")
+	}
+	return nil, ErrNoMatch
+}
+
+// parseMailMessage matches a dovecot/postfix auth-failure pattern. Mail auth
+// failures are primary attempt events (counted by auto-ban and thresholds),
+// exactly like failed_password for sshd.
+func parseMailMessage(ts time.Time, msg, line string, re *regexp.Regexp, source string) (*Event, error) {
+	m := namedGroups(re, msg)
+	if m == nil {
 		return nil, ErrNoMatch
 	}
+	return &Event{
+		TS:        ts,
+		IP:        m["ip"],
+		EventType: "mail_auth_fail",
+		Username:  m["user"],
+		Source:    source,
+		Raw:       line,
+	}, nil
+}
 
+func parseSSHDMessage(ts time.Time, msg, line string) (*Event, error) {
 	for _, p := range sshdPatterns {
 		m := namedGroups(p.re, msg)
 		if m == nil {

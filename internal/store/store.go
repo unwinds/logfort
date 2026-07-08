@@ -21,15 +21,20 @@ type Store interface {
 	ListBans(ctx context.Context, activeOnly bool) ([]BanRow, error)
 	GetMapPoints(ctx context.Context, window string) ([]MapPoint, error)
 	DeleteOldEvents(ctx context.Context, retentionDays int) (int64, error)
-	// BanIP records a manual ban in the bans table.
-	BanIP(ctx context.Context, ip, source, reason string) error
+	// BanIP records a manual ban in the bans table. expiresAt is a Unix
+	// timestamp after which the ban should be lifted; 0 means permanent.
+	BanIP(ctx context.Context, ip, source, reason string, expiresAt int64) error
 	// UnbanIP marks all active bans for an IP as inactive.
 	UnbanIP(ctx context.Context, ip string) error
+	// ListExpiredBans returns active bans whose expires_at has passed —
+	// candidates for the expiry sweeper. Permanent bans (NULL expires_at)
+	// are never returned.
+	ListExpiredBans(ctx context.Context, now time.Time) ([]BanRow, error)
 	// CountIPEvents returns the number of primary failed-attempt events
-	// (failed_password, http_auth_fail, max_auth) from ip since the given
-	// time. Auxiliary lines sshd logs around one attempt (invalid_user,
-	// pam_failure, disconnect_preauth) are excluded to keep the count equal
-	// to real attempts.
+	// (failed_password, http_auth_fail, mail_auth_fail, max_auth) from ip
+	// since the given time. Auxiliary lines sshd logs around one attempt
+	// (invalid_user, pam_failure, disconnect_preauth) are excluded to keep
+	// the count equal to real attempts.
 	CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error)
 	// GetSetting returns the value for key. found is false when the key does not exist.
 	GetSetting(ctx context.Context, key string) (value string, found bool, err error)
@@ -84,6 +89,7 @@ type EventRow struct {
 	City       string   `json:"city,omitempty"`
 	Lat        *float64 `json:"lat,omitempty"`
 	Lon        *float64 `json:"lon,omitempty"`
+	ASN        string   `json:"asn,omitempty"`
 }
 
 // BanRow is the JSON-serialisable form of a ban record.
@@ -93,6 +99,7 @@ type BanRow struct {
 	Jail       string `json:"jail,omitempty"`
 	BannedAt   int64  `json:"banned_at"`
 	UnbannedAt *int64 `json:"unbanned_at,omitempty"`
+	ExpiresAt  *int64 `json:"expires_at,omitempty"` // nil = permanent
 	Active     bool   `json:"active"`
 	Source     string `json:"source"`
 	Reason     string `json:"reason,omitempty"`

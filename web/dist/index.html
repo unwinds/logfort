@@ -194,6 +194,10 @@
     .badge-ban      { background:rgba(235,203,139,.12); color:#c8a84e; }
     .badge-unban    { background:rgba(165,184,204,.1);  color:var(--muted); }
     .badge-other    { background:var(--adim); color:var(--accent); }
+    /* ASN cells can be long ("AS12345 Some Very Long Telecom LLC") — truncate,
+       full value in the title tooltip. Hidden on the compact dashboard table. */
+    .asn-cell { max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #dash-events-table th:nth-child(8), #dash-events-table td:nth-child(8) { display:none; }
     .ip   { font-family:'SF Mono','Fira Code',monospace; color:var(--accent); font-size:11.5px; }
     .ip-link { cursor:pointer; }
     .ip-link:hover { text-decoration:underline; }
@@ -339,8 +343,8 @@
       body::after { content:''; display:block; position:fixed; bottom:0; left:0; right:0; height:54px; background:var(--sb-bg); border-top:1px solid var(--sb-border); z-index:100; }
       .mobile-nav { display:flex !important; position:fixed; bottom:0; left:0; right:0; height:54px; z-index:101; background:var(--sb-bg); border-top:1px solid var(--sb-border); }
       .main-area { padding-bottom:54px; }
-      #events-table th:nth-child(6),#events-table td:nth-child(6),#events-table th:nth-child(7),#events-table td:nth-child(7) { display:none; }
-      #bans-table th:nth-child(4),#bans-table td:nth-child(4) { display:none; }
+      #events-table th:nth-child(6),#events-table td:nth-child(6),#events-table th:nth-child(7),#events-table td:nth-child(7),#events-table th:nth-child(8),#events-table td:nth-child(8) { display:none; }
+      #bans-table th:nth-child(4),#bans-table td:nth-child(4),#bans-table th:nth-child(5),#bans-table td:nth-child(5) { display:none; }
       #map-el { height:55vh; min-height:280px; }
     }
     .mobile-nav { display:none; }
@@ -466,6 +470,7 @@
           <option value="max_auth">max_auth</option>
           <option value="disconnect_preauth">disconnect_preauth</option>
           <option value="http_auth_fail">http_auth_fail</option>
+          <option value="mail_auth_fail">mail_auth_fail</option>
           <option value="ban">ban</option>
           <option value="unban">unban</option>
         </select>
@@ -514,6 +519,13 @@
           <div id="manual-ban-form" class="ban-form" style="display:none;">
             <input type="text" id="ban-ip-input" placeholder="IP address" style="width:140px;">
             <input type="text" id="ban-reason-input" placeholder="Reason (optional)" style="width:130px;">
+            <select id="ban-duration-input" title="Ban duration" style="font-size:11px;padding:3px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:5px;">
+              <option value="0" selected>Permanent</option>
+              <option value="3600">1 hour</option>
+              <option value="86400">24 hours</option>
+              <option value="604800">7 days</option>
+              <option value="2592000">30 days</option>
+            </select>
             <button class="btn btn-danger" onclick="banIPManual()">Ban</button>
           </div>
         </div>
@@ -811,6 +823,14 @@
                       <small>Alert when a single IP exceeds N failed attempts in window</small>
                     </div>
                   </label>
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-digest-daily">
+                    <div class="rule-desc">Daily digest<small>24-hour summary every morning at 09:00 (server time)</small></div>
+                  </label>
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-digest-weekly">
+                    <div class="rule-desc">Weekly digest<small>7-day summary every Monday at 09:00 (server time)</small></div>
+                  </label>
                 </div>
               </div>
             </div>
@@ -912,6 +932,18 @@
                   </div>
                   <span class="field-hint">Any IP exceeding this number of failed password attempts within the window is banned automatically. Only real attempts count (one per wrong password) — auxiliary log lines and accepted logins never do.</span>
                 </div>
+                <div class="field-group">
+                  <label>Ban duration</label>
+                  <select id="fw-autoban-bantime" style="width:140px;">
+                    <option value="3600">1 hour</option>
+                    <option value="21600">6 hours</option>
+                    <option value="86400" selected>24 hours</option>
+                    <option value="604800">7 days</option>
+                    <option value="2592000">30 days</option>
+                    <option value="0">Permanent</option>
+                  </select>
+                  <span class="field-hint">Auto-bans are lifted automatically after this long. Attacker IPs are mostly dynamic — permanent bans slowly fill the firewall with stale addresses.</span>
+                </div>
               </div>
             </div>
 
@@ -965,6 +997,13 @@
                   <div class="field-row">
                     <input type="text" id="fw-ban-ip" placeholder="IP address (e.g. 1.2.3.4)" style="flex:1;font-family:monospace">
                     <input type="text" id="fw-ban-reason" placeholder="Reason (optional)" style="flex:1;font-family:monospace">
+                    <select id="fw-ban-duration" title="Ban duration">
+                      <option value="0" selected>Permanent</option>
+                      <option value="3600">1 hour</option>
+                      <option value="86400">24 hours</option>
+                      <option value="604800">7 days</option>
+                      <option value="2592000">30 days</option>
+                    </select>
                     <button class="btn btn-danger" onclick="fwBanIP()">Ban</button>
                   </div>
                   <span class="field-hint" id="fw-ban-status"></span>
@@ -1161,6 +1200,7 @@ function eventRowHTML(e) {
     <td class="user">${esc(e.username||'')}</td>
     <td style="color:var(--muted)">${e.port||''}</td>
     <td class="geo">${esc(e.source)}</td>
+    <td class="geo asn-cell" title="${esc(e.asn||'')}">${esc(e.asn||'')}</td>
     ${responderEnabled?`<td>${banBtn}</td>`:''}
   </tr>`;
 }
@@ -1168,7 +1208,7 @@ function eventRowHTML(e) {
 function eventsTable(events, id) {
   const ac = responderEnabled ? '<th></th>' : '';
   return `<table id="${id}"><thead><tr>
-    <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th>${ac}
+    <th>Time</th><th>Type</th><th>IP</th><th>Country</th><th>User</th><th>Port</th><th>Source</th><th>ASN</th>${ac}
   </tr></thead><tbody>${events.map(e=>eventRowHTML(e)).join('')}</tbody></table>`;
 }
 
@@ -1294,16 +1334,17 @@ function prependLiveEvent(ev) {
     <td class="user">${esc(ev.username||'')}</td>
     <td style="color:var(--muted)">${ev.port||''}</td>
     <td class="geo">${esc(ev.source)}</td>
+    <td class="geo asn-cell" title="${esc(ev.asn||'')}">${esc(ev.asn||'')}</td>
     ${responderEnabled?`<td>${banBtn}</td>`:''}`;
   tbody.insertBefore(row, tbody.firstChild);
   while (tbody.rows.length>100) tbody.deleteRow(tbody.rows.length-1);
 }
 
 // ── Ban/Unban ──────────────────────────────────────────────────────────────
-async function banIP(ip, reason) {
+async function banIP(ip, reason, durationSecs) {
   if (!confirm(`Ban ${ip}?`)) return false;
   try {
-    const r = await fetch('/api/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,reason:reason||'manual'})});
+    const r = await fetch('/api/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,reason:reason||'manual',duration_secs:durationSecs||0})});
     const d = await r.json();
     if (!r.ok) { alert('Ban failed: '+(d.error||r.status)); return false; }
     loadBans(); loadAll(); return true;
@@ -1323,8 +1364,9 @@ async function unbanIP(ip) {
 async function banIPManual() {
   const ip = document.getElementById('ban-ip-input').value.trim();
   const reason = document.getElementById('ban-reason-input').value.trim();
+  const dur = parseInt(document.getElementById('ban-duration-input').value, 10) || 0;
   if (!ip) { alert('Enter an IP address'); return; }
-  const ok = await banIP(ip, reason);
+  const ok = await banIP(ip, reason, dur);
   if (ok) { document.getElementById('ban-ip-input').value=''; document.getElementById('ban-reason-input').value=''; }
 }
 
@@ -1355,18 +1397,26 @@ async function loadBans() {
     const rows = bans.map(b => {
       const unbanBtn = (responderEnabled&&b.active) ? `<button class="btn btn-muted" style="font-size:10px;padding:2px 8px;" onclick="unbanIP('${esc(b.ip)}')">Unban</button>` : '';
       const dur = b.unbanned_at ? fmtDuration(b.unbanned_at-b.banned_at) : fmtDuration(Math.floor(Date.now()/1000)-b.banned_at);
+      const now = Math.floor(Date.now()/1000);
+      let expires = '<span title="Permanent ban">—</span>';
+      if (b.expires_at) {
+        expires = b.expires_at > now
+          ? `<span title="${fmtTS(b.expires_at)}">in ${fmtDuration(b.expires_at-now)}</span>`
+          : '<span title="Will be lifted by the next sweep">expiring…</span>';
+      }
       return `<tr>
         <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(b.ip)}')" title="Show all events from this IP">${esc(b.ip)}</span></td>
         <td style="color:var(--muted);font-size:11px;">${esc(b.jail||'—')}</td>
         <td class="ts">${fmtTS(b.banned_at)}</td>
         <td style="color:var(--muted);font-size:11px;">${dur}</td>
-        <td><span class="badge ${b.active?'badge-ban ban-active':'badge-unban ban-inactive'}">${b.active?'ACTIVE':'EXPIRED'}</span></td>
+        <td style="color:var(--muted);font-size:11px;">${b.active?expires:'—'}</td>
+        <td><span class="badge ${b.active?'badge-ban ban-active':'badge-unban ban-inactive'}">${b.active?'ACTIVE':'LIFTED'}</span></td>
         <td style="color:var(--muted);font-size:11px;">${esc(b.source)}</td>
         ${responderEnabled?`<td>${unbanBtn}</td>`:''}
       </tr>`;
     }).join('');
     el.innerHTML = `<table id="bans-table"><thead><tr>
-      <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Status</th><th>Source</th>${ac}
+      <th>IP</th><th>Jail</th><th>Banned At</th><th>Duration</th><th>Expires</th><th>Status</th><th>Source</th>${ac}
     </tr></thead><tbody>${rows}</tbody></table>`;
   } catch(e) { el.innerHTML=`<div class="error-msg">${esc(String(e))}</div>`; }
 }
@@ -1495,6 +1545,7 @@ async function loadSystemInfo() {
       d.fail2ban_log  ? {k:'Fail2ban log', v:d.fail2ban_log} : null,
       d.backend==='journald' ? {k:'Journald unit', v:d.journald_unit} : null,
       {k:'GeoIP',      v:d.geoip_enabled?'Enabled':'Disabled',    cls:d.geoip_enabled?'sysinfo-ok':'sysinfo-off'},
+      {k:'ASN',        v:d.asn_enabled?'Enabled':'Disabled',      cls:d.asn_enabled?'sysinfo-ok':'sysinfo-off'},
       {k:'Responder',  v:d.responder_enabled?d.responder_backend:'Disabled', cls:d.responder_enabled?'sysinfo-ok':'sysinfo-off'},
       {k:'Auth',       v:d.auth_enabled?'Enabled':'Disabled',      cls:d.auth_enabled?'sysinfo-warn':'sysinfo-off'},
       {k:'Listen',     v:d.listen},
@@ -1572,12 +1623,14 @@ async function loadNotifySettings() {
     setBadge('gotify-status-badge',  !!(d.gotify_url&&d.gotify_token));
     setBadge('email-status-badge',   !!(d.smtp_host&&d.smtp_from&&d.smtp_to));
     const rulesLocked = locked.includes('rules');
-    ['rule-ban','rule-accepted','rule-country','rule-threshold','threshold-n','threshold-dur']
+    ['rule-ban','rule-accepted','rule-country','rule-threshold','threshold-n','threshold-dur','rule-digest-daily','rule-digest-weekly']
       .forEach(id => lockField(id, rulesLocked));
     const rules = (d.rules||'').split(',').map(r=>r.trim()).filter(Boolean);
-    document.getElementById('rule-ban').checked      = rules.includes('ban');
-    document.getElementById('rule-accepted').checked = rules.includes('accepted_login');
-    document.getElementById('rule-country').checked  = rules.includes('new_country');
+    document.getElementById('rule-ban').checked           = rules.includes('ban');
+    document.getElementById('rule-accepted').checked      = rules.includes('accepted_login');
+    document.getElementById('rule-country').checked       = rules.includes('new_country');
+    document.getElementById('rule-digest-daily').checked  = rules.includes('digest:daily');
+    document.getElementById('rule-digest-weekly').checked = rules.includes('digest:weekly');
     const thr = rules.find(r=>r.startsWith('threshold:'));
     if (thr) {
       document.getElementById('rule-threshold').checked=true;
@@ -1616,6 +1669,8 @@ async function saveSettings() {
   if (document.getElementById('rule-threshold').checked) {
     rules.push(`threshold:${document.getElementById('threshold-n').value||'100'}/${document.getElementById('threshold-dur').value||'1h'}`);
   }
+  if (document.getElementById('rule-digest-daily').checked)  rules.push('digest:daily');
+  if (document.getElementById('rule-digest-weekly').checked) rules.push('digest:weekly');
   const val = id => document.getElementById(id).value.trim();
   const body = {
     telegram_token:   val('tg-token'),
@@ -1698,6 +1753,16 @@ async function loadFirewallSettings() {
     document.getElementById('fw-autoban-threshold').value       = d.autoban_threshold||50;
     const sel = document.getElementById('fw-autoban-window');
     if (d.autoban_window && [...sel.options].some(o=>o.value===d.autoban_window)) sel.value=d.autoban_window;
+    const btSel = document.getElementById('fw-autoban-bantime');
+    const bt = String(d.autoban_bantime_secs ?? 86400);
+    if (![...btSel.options].some(o=>o.value===bt)) {
+      // Custom value saved via the API — surface it instead of silently
+      // snapping to the nearest preset.
+      const opt = document.createElement('option');
+      opt.value = bt; opt.textContent = fmtDuration(+bt);
+      btSel.appendChild(opt);
+    }
+    btSel.value = bt;
     updateFwAutoBanBadge();
 
     // Allowlist: built-in entries as read-only chips, extra entries editable.
@@ -1776,9 +1841,10 @@ async function saveFirewallSettings() {
   btn.disabled=true;
   try {
     const body = {
-      autoban_enabled:   document.getElementById('fw-autoban-enabled').checked,
-      autoban_threshold: parseInt(document.getElementById('fw-autoban-threshold').value)||50,
-      autoban_window:    document.getElementById('fw-autoban-window').value,
+      autoban_enabled:      document.getElementById('fw-autoban-enabled').checked,
+      autoban_threshold:    parseInt(document.getElementById('fw-autoban-threshold').value)||50,
+      autoban_window:       document.getElementById('fw-autoban-window').value,
+      autoban_bantime_secs: parseInt(document.getElementById('fw-autoban-bantime').value, 10) || 0,
     };
     const r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d = await r.json();
@@ -1792,10 +1858,11 @@ async function saveFirewallSettings() {
 async function fwBanIP() {
   const ip     = document.getElementById('fw-ban-ip').value.trim();
   const reason = document.getElementById('fw-ban-reason').value.trim();
+  const dur    = parseInt(document.getElementById('fw-ban-duration').value, 10) || 0;
   const status = document.getElementById('fw-ban-status');
   if (!ip) { status.textContent='Enter an IP address'; status.style.color='var(--danger)'; return; }
   try {
-    const r = await fetch('/api/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,reason:reason||'manual'})});
+    const r = await fetch('/api/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,reason:reason||'manual',duration_secs:dur})});
     const d = await r.json();
     if (!r.ok) throw new Error(d.error||r.status);
     status.textContent=`✓ ${ip} banned`; status.style.color='var(--success)';

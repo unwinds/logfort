@@ -38,8 +38,11 @@ func (s *stubStore) GetStats(context.Context, string) (*store.Stats, error)     
 func (s *stubStore) ListBans(context.Context, bool) ([]store.BanRow, error)         { return nil, nil }
 func (s *stubStore) GetMapPoints(context.Context, string) ([]store.MapPoint, error) { return nil, nil }
 func (s *stubStore) DeleteOldEvents(context.Context, int) (int64, error)            { return 0, nil }
-func (s *stubStore) BanIP(context.Context, string, string, string) error            { return nil }
+func (s *stubStore) BanIP(context.Context, string, string, string, int64) error     { return nil }
 func (s *stubStore) UnbanIP(context.Context, string) error                          { return nil }
+func (s *stubStore) ListExpiredBans(context.Context, time.Time) ([]store.BanRow, error) {
+	return nil, nil
+}
 func (s *stubStore) GetSetting(context.Context, string) (string, bool, error)       { return "", false, nil }
 func (s *stubStore) SetSetting(context.Context, string, string) error               { return nil }
 func (s *stubStore) SetSettings(context.Context, map[string]string) error           { return nil }
@@ -57,7 +60,7 @@ func makeDispatcher(t *testing.T, ruleStrs []string, n Notifier, st store.Store)
 		mn = &mockNotifier{}
 		n = mn
 	}
-	rules, err := parseRules(ruleStrs)
+	rules, _, err := parseRules(ruleStrs)
 	if err != nil {
 		t.Fatalf("parseRules: %v", err)
 	}
@@ -78,7 +81,7 @@ func event(typ, ip, country string) *parse.Event {
 // --- tests ---
 
 func TestParseRules_unknown(t *testing.T) {
-	_, err := parseRules([]string{"unknown_rule"})
+	_, _, err := parseRules([]string{"unknown_rule"})
 	if err == nil {
 		t.Fatal("expected error for unknown rule")
 	}
@@ -93,14 +96,14 @@ func TestParseRules_threshold_bad(t *testing.T) {
 		"threshold:0/1h",
 	}
 	for _, s := range cases {
-		if _, err := parseRules([]string{s}); err == nil {
+		if _, _, err := parseRules([]string{s}); err == nil {
 			t.Errorf("parseRules(%q): expected error, got nil", s)
 		}
 	}
 }
 
 func TestParseRules_threshold_ok(t *testing.T) {
-	rules, err := parseRules([]string{"threshold:100/1h"})
+	rules, _, err := parseRules([]string{"threshold:100/1h"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

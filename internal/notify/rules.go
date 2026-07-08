@@ -138,9 +138,11 @@ func (r *thresholdRule) match(ctx context.Context, ev *parse.Event, st store.Sto
 	}
 }
 
-// parseRules converts config rule strings into rule instances.
-func parseRules(strs []string) ([]rule, error) {
+// parseRules converts config rule strings into event rule instances plus
+// scheduled digest entries (digest rules fire on wall-clock time, not events).
+func parseRules(strs []string) ([]rule, []digestSchedule, error) {
 	var rules []rule
+	var digests []digestSchedule
 	for _, s := range strs {
 		s = strings.TrimSpace(s)
 		switch {
@@ -153,14 +155,20 @@ func parseRules(strs []string) ([]rule, error) {
 		case strings.HasPrefix(s, "threshold:"):
 			r, err := parseThresholdRule(s)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			rules = append(rules, r)
+		case strings.HasPrefix(s, "digest:"):
+			ds, err := parseDigest(s)
+			if err != nil {
+				return nil, nil, err
+			}
+			digests = append(digests, ds)
 		default:
-			return nil, fmt.Errorf("unknown notify rule %q; valid: accepted_login, ban, new_country, threshold:N/Xd", s)
+			return nil, nil, fmt.Errorf("unknown notify rule %q; valid: accepted_login, ban, new_country, threshold:N/dur, digest:daily, digest:weekly", s)
 		}
 	}
-	return rules, nil
+	return rules, digests, nil
 }
 
 // parseThresholdRule parses "threshold:N/Xh" into a thresholdRule.

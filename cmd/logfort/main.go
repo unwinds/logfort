@@ -63,7 +63,10 @@ func main() {
 
 	// Build log sources.
 	var sources []ingest.Source
-	if cfg.Backend == "file" {
+	if cfg.DemoMode {
+		slog.Warn("DEMO MODE: real logs are not read, all events are synthetic (unset LOGFORT_DEMO for production)")
+		sources = []ingest.Source{ingest.NewDemoSource()}
+	} else if cfg.Backend == "file" {
 		if len(cfg.LogPaths) == 0 {
 			slog.Error("no log paths configured; set LOGFORT_LOG_PATHS")
 			os.Exit(1)
@@ -97,6 +100,21 @@ func main() {
 			looker = geoDB
 			geoIPLoaded = true
 			slog.Info("GeoIP database loaded", "path", cfg.GeoIPDB)
+		}
+	}
+	// Optional ASN database (DB-IP ASN Lite / GeoLite2-ASN) — enriches events
+	// with the attacker's network operator, still without any outbound lookups.
+	asnLoaded := false
+	if cfg.ASNDB != "" {
+		asnDB, err := geo.OpenASN(cfg.ASNDB)
+		if err != nil {
+			slog.Debug("ASN database unavailable, asn fields will be empty",
+				"path", cfg.ASNDB, "err", err)
+		} else {
+			defer asnDB.Close()
+			looker = geo.WithASN{City: looker, ASN: asnDB}
+			asnLoaded = true
+			slog.Info("ASN database loaded", "path", cfg.ASNDB)
 		}
 	}
 
@@ -133,6 +151,7 @@ func main() {
 	srv := api.New(cfg, st, version)
 	srv.SetEnvNotifyConfig(envCfg)
 	srv.SetGeoIPEnabled(geoIPLoaded)
+	srv.SetASNEnabled(asnLoaded)
 	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
 	srv.SetSourceStatusFunc(pipeline.SourceStatuses)
@@ -197,6 +216,11 @@ func main() {
 		go reconcileBans(ctx, st, resp)
 	}
 
+	// Lift bans whose TTL has passed. Runs even with the responder disabled:
+	// rows with an expiry may remain from when it was enabled, and they must
+	// still flip to inactive (Unban on NoopResponder is a no-op).
+	go runBanExpiry(ctx, st, resp, srv)
+
 	// Wait for shutdown signal.
 	<-ctx.Done()
 	slog.Info("shutting down")
@@ -222,8 +246,15 @@ func reconcileBans(ctx context.Context, st store.Store, resp responder.Responder
 		return
 	}
 	applied := 0
+	now := time.Now().Unix()
 	for _, b := range bans {
 		if b.Source != resp.Name() {
+			continue
+		}
+		// Skip bans that expired while the process was down — the expiry
+		// sweeper will mark them inactive; re-adding them first would leave
+		// a firewall entry the sweeper immediately has to remove again.
+		if b.ExpiresAt != nil && *b.ExpiresAt <= now {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -303,6 +334,50 @@ func runF2BEnforce(ctx context.Context, st store.Store, mgr *f2b.Manager) {
 			return
 		case <-ticker.C:
 			apply()
+		}
+	}
+}
+
+// runBanExpiry lifts bans whose TTL has passed: firewall unban first (kept
+// active and retried on the next sweep if that fails), then the DB row flips
+// to inactive and an "unban" event lands in the feed.
+func runBanExpiry(ctx context.Context, st store.Store, resp responder.Responder, srv *api.Server) {
+	sweep := func() {
+		expired, err := st.ListExpiredBans(ctx, time.Now())
+		if err != nil {
+			slog.Error("ban expiry: list", "err", err)
+			return
+		}
+		for _, b := range expired {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := resp.Unban(ctx, b.IP); err != nil {
+				slog.Warn("ban expiry: firewall unban failed, will retry", "ip", b.IP, "err", err)
+				continue
+			}
+			if err := st.UnbanIP(ctx, b.IP); err != nil {
+				slog.Error("ban expiry: store unban", "ip", b.IP, "err", err)
+				continue
+			}
+			slog.Info("ban expired", "ip", b.IP, "source", b.Source)
+			ev := &parse.Event{TS: time.Now().UTC(), IP: b.IP, EventType: "unban", Source: "expiry"}
+			if err := st.InsertEvent(ctx, ev); err != nil && !errors.Is(err, store.ErrDuplicate) {
+				slog.Warn("ban expiry: record unban event", "ip", b.IP, "err", err)
+			}
+			srv.PublishEvent(ev)
+		}
+	}
+
+	sweep()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
 		}
 	}
 }

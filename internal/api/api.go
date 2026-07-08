@@ -48,10 +48,12 @@ type Server struct {
 	notifyFn        func(*parse.Event)
 	notifyDisp      *notify.Dispatcher // tracked for Stop() on replacement
 	geoIPEnabled    bool
+	asnEnabled      bool
 	f2bMgr          *f2b.Manager                 // nil when fail2ban integration is unavailable
 	sourcesFn       func() []ingest.SourceStatus // pipeline source health for /api/health
 	autoBanCooldown sync.Map                     // IP string → time.Time; prevents duplicate bans within window
 	autoBanSem      chan struct{}                // limits concurrent auto-ban background goroutines
+	statsCache      sync.Map                     // "stats:<window>" / "map:<window>" → statsCacheEntry
 	shutCtx         context.Context
 	shutCancel      context.CancelFunc
 }
@@ -90,6 +92,9 @@ func (s *Server) SetResponder(r responder.Responder, al *responder.Allowlist) {
 
 // SetGeoIPEnabled records whether a GeoIP database was successfully loaded.
 func (s *Server) SetGeoIPEnabled(v bool) { s.geoIPEnabled = v }
+
+// SetASNEnabled records whether an ASN database was successfully loaded.
+func (s *Server) SetASNEnabled(v bool) { s.asnEnabled = v }
 
 // SetF2BManager wires the fail2ban jail manager used by the settings API.
 // Call with nil (or not at all) when fail2ban integration is unavailable.
@@ -164,6 +169,7 @@ func (s *Server) PublishEvent(ev *parse.Event) {
 		"city":        ev.Geo.City,
 		"lat":         lat,
 		"lon":         lon,
+		"asn":         ev.Geo.ASN,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -331,6 +337,36 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, resp)
 }
 
+// statsCacheEntry is a cached /api/stats or /api/map payload.
+type statsCacheEntry struct {
+	payload any
+	expires time.Time
+}
+
+// cacheTTLForWindow returns how long responses for a stats window may be
+// served from cache. Long windows aggregate a large slice of the events table
+// (months of data on a busy host) — dashboards auto-refreshing every few
+// seconds would re-run those scans for identical results. Short windows stay
+// uncached so the live dashboard reflects new events immediately.
+func cacheTTLForWindow(window string) time.Duration {
+	switch window {
+	case "7d", "30d", "all":
+		return 60 * time.Second
+	}
+	return 0
+}
+
+// cachedPayload returns a fresh cached payload for key, or nil.
+func (s *Server) cachedPayload(key string) any {
+	if v, ok := s.statsCache.Load(key); ok {
+		if e := v.(statsCacheEntry); time.Now().Before(e.expires) {
+			return e.payload
+		}
+		s.statsCache.Delete(key)
+	}
+	return nil
+}
+
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	window := r.URL.Query().Get("window")
 	if window == "" {
@@ -340,11 +376,21 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid window; use 1h|6h|24h|7d|30d|all")
 		return
 	}
+	ttl := cacheTTLForWindow(window)
+	if ttl > 0 {
+		if cached := s.cachedPayload("stats:" + window); cached != nil {
+			writeJSON(w, http.StatusOK, cached)
+			return
+		}
+	}
 	st, err := s.store.GetStats(r.Context(), window)
 	if err != nil {
 		slog.Error("get stats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if ttl > 0 {
+		s.statsCache.Store("stats:"+window, statsCacheEntry{payload: st, expires: time.Now().Add(ttl)})
 	}
 	writeJSON(w, http.StatusOK, st)
 }
@@ -416,7 +462,7 @@ func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="logfort-events.csv"`)
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"ts", "ip", "event_type", "username", "user_valid", "auth_method", "port", "source", "country", "city", "lat", "lon"})
+	_ = cw.Write([]string{"ts", "ip", "event_type", "username", "user_valid", "auth_method", "port", "source", "country", "city", "lat", "lon", "asn"})
 	for _, e := range events {
 		userValid := ""
 		if e.UserValid != nil {
@@ -436,7 +482,7 @@ func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
 		_ = cw.Write([]string{
 			time.Unix(e.TS, 0).UTC().Format(time.RFC3339),
 			e.IP, e.EventType, csvCell(e.Username), userValid, e.AuthMethod,
-			port, e.Source, csvCell(e.Country), csvCell(e.City), lat, lon,
+			port, e.Source, csvCell(e.Country), csvCell(e.City), lat, lon, csvCell(e.ASN),
 		})
 	}
 	cw.Flush()
@@ -492,16 +538,20 @@ func (s *Server) handleBansCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="logfort-bans.csv"`)
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"ip", "jail", "banned_at", "unbanned_at", "active", "source", "reason"})
+	_ = cw.Write([]string{"ip", "jail", "banned_at", "unbanned_at", "expires_at", "active", "source", "reason"})
 	for _, b := range bans {
 		unbannedAt := ""
 		if b.UnbannedAt != nil {
 			unbannedAt = time.Unix(*b.UnbannedAt, 0).UTC().Format(time.RFC3339)
 		}
+		expiresAt := ""
+		if b.ExpiresAt != nil {
+			expiresAt = time.Unix(*b.ExpiresAt, 0).UTC().Format(time.RFC3339)
+		}
 		_ = cw.Write([]string{
 			b.IP, csvCell(b.Jail),
 			time.Unix(b.BannedAt, 0).UTC().Format(time.RFC3339),
-			unbannedAt, strconv.FormatBool(b.Active), b.Source, csvCell(b.Reason),
+			unbannedAt, expiresAt, strconv.FormatBool(b.Active), b.Source, csvCell(b.Reason),
 		})
 	}
 	cw.Flush()
@@ -568,6 +618,13 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid window; use 1h|6h|24h|7d|30d|all")
 		return
 	}
+	ttl := cacheTTLForWindow(window)
+	if ttl > 0 {
+		if cached := s.cachedPayload("map:" + window); cached != nil {
+			writeJSON(w, http.StatusOK, cached)
+			return
+		}
+	}
 	points, err := s.store.GetMapPoints(r.Context(), window)
 	if err != nil {
 		slog.Error("map points", "err", err)
@@ -581,6 +638,9 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.HomeLat != nil && s.cfg.HomeLon != nil {
 		resp["home_lat"] = *s.cfg.HomeLat
 		resp["home_lon"] = *s.cfg.HomeLon
+	}
+	if ttl > 0 {
+		s.statsCache.Store("map:"+window, statsCacheEntry{payload: resp, expires: time.Now().Add(ttl)})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -635,8 +695,9 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		IP     string `json:"ip"`
-		Reason string `json:"reason"`
+		IP           string `json:"ip"`
+		Reason       string `json:"reason"`
+		DurationSecs int64  `json:"duration_secs"` // 0 = permanent
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -647,6 +708,10 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 
 	if !responder.IsValid(req.IP) {
 		writeError(w, http.StatusBadRequest, "invalid IP address")
+		return
+	}
+	if req.DurationSecs < 0 || req.DurationSecs > maxBanDurationSecs {
+		writeError(w, http.StatusBadRequest, "duration_secs must be between 0 (permanent) and 31536000 (365 days)")
 		return
 	}
 	// Anti-self-lockout: compare against the originating client IP, which
@@ -665,8 +730,12 @@ func (s *Server) handleBanPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var expiresAt int64
+	if req.DurationSecs > 0 {
+		expiresAt = time.Now().Add(time.Duration(req.DurationSecs) * time.Second).Unix()
+	}
 	// Record in store first; roll back if the firewall operation fails.
-	if err := s.store.BanIP(r.Context(), req.IP, s.responder.Name(), req.Reason); err != nil {
+	if err := s.store.BanIP(r.Context(), req.IP, s.responder.Name(), req.Reason, expiresAt); err != nil {
 		slog.Error("store ban", "ip", req.IP, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to record ban")
 		return
@@ -772,6 +841,7 @@ func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 		"fail2ban_log":      s.cfg.Fail2BanLog,
 		"journald_unit":     s.cfg.JournaldUnit,
 		"geoip_enabled":     s.geoIPEnabled,
+		"asn_enabled":       s.asnEnabled,
 		"responder_enabled": s.cfg.ResponderEnabled,
 		"responder_backend": s.responder.Name(),
 		"fail2ban_jail":     s.cfg.Fail2BanJail,
@@ -788,9 +858,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"rules":             strings.Join(s.cfg.NotifyRules, ","),
 		"retention_days":    s.cfg.RetentionDays,
-		"autoban_enabled":   s.cfg.AutoBanEnabled,
-		"autoban_threshold": s.cfg.AutoBanThreshold,
-		"autoban_window":    s.cfg.AutoBanWindow,
+		"autoban_enabled":      s.cfg.AutoBanEnabled,
+		"autoban_threshold":    s.cfg.AutoBanThreshold,
+		"autoban_window":       s.cfg.AutoBanWindow,
+		"autoban_bantime_secs": s.cfg.AutoBanBanTime,
 		"ignore_ips":        strings.Join(s.cfg.ExtraIgnoreIPs, ", "),
 		"ignore_ips_base":   append([]string{}, s.cfg.IgnoreIPs...),
 	}
@@ -858,6 +929,7 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		AutoBanEnabled   *bool   `json:"autoban_enabled"`
 		AutoBanThreshold *int    `json:"autoban_threshold"`
 		AutoBanWindow    *string `json:"autoban_window"`
+		AutoBanBanTime   *int64  `json:"autoban_bantime_secs"` // 0 = permanent
 		IgnoreIPs        *string `json:"ignore_ips"`
 		// fail2ban jail tuning (applied via the fail2ban socket)
 		F2BMaxRetry *int64 `json:"f2b_maxretry"`
@@ -925,6 +997,13 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		proposed.AutoBanWindow = *req.AutoBanWindow
+	}
+	if req.AutoBanBanTime != nil {
+		if *req.AutoBanBanTime < 0 || *req.AutoBanBanTime > maxBanDurationSecs {
+			writeError(w, http.StatusBadRequest, "autoban_bantime_secs must be between 0 (permanent) and 31536000 (365 days)")
+			return
+		}
+		proposed.AutoBanBanTime = *req.AutoBanBanTime
 	}
 
 	// Extra allowlist entries — validate every IP/CIDR before persisting.
@@ -1022,6 +1101,9 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	if req.AutoBanWindow != nil {
 		toSave["autoban.window"] = proposed.AutoBanWindow
 	}
+	if req.AutoBanBanTime != nil {
+		toSave["autoban.bantime"] = strconv.FormatInt(proposed.AutoBanBanTime, 10)
+	}
 	if len(toSave) > 0 {
 		if err := s.store.SetSettings(r.Context(), toSave); err != nil {
 			slog.Error("save settings", "err", err)
@@ -1041,6 +1123,7 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.AutoBanEnabled = proposed.AutoBanEnabled
 	s.cfg.AutoBanThreshold = proposed.AutoBanThreshold
 	s.cfg.AutoBanWindow = proposed.AutoBanWindow
+	s.cfg.AutoBanBanTime = proposed.AutoBanBanTime
 	s.cfg.ExtraIgnoreIPs = proposed.ExtraIgnoreIPs
 	s.cfg.F2BMaxRetry = proposed.F2BMaxRetry
 	s.cfg.F2BBanTime = proposed.F2BBanTime
@@ -1106,6 +1189,7 @@ func (s *Server) AutoBanEvent(ev *parse.Event) {
 	responderEnabled := s.cfg.ResponderEnabled
 	threshold := s.cfg.AutoBanThreshold
 	window := s.cfg.AutoBanWindow
+	banTime := s.cfg.AutoBanBanTime
 	s.cfgMu.RUnlock()
 
 	if !enabled || !responderEnabled {
@@ -1115,7 +1199,7 @@ func (s *Server) AutoBanEvent(ev *parse.Event) {
 	// counts. Auxiliary lines (invalid_user, pam_failure, disconnect_preauth)
 	// would trigger redundant threshold checks for the same attempt.
 	switch ev.EventType {
-	case "failed_password", "http_auth_fail", "max_auth":
+	case "failed_password", "http_auth_fail", "mail_auth_fail", "max_auth":
 	default:
 		return
 	}
@@ -1155,11 +1239,11 @@ func (s *Server) AutoBanEvent(ev *parse.Event) {
 	}
 	go func() {
 		defer func() { <-s.autoBanSem }()
-		s.autoBanBackground(ip, threshold, dur, now)
+		s.autoBanBackground(ip, threshold, dur, banTime, now)
 	}()
 }
 
-func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, now time.Time) {
+func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, banTime int64, now time.Time) {
 	// Respect server shutdown; cap individual ban operations at 30s.
 	ctx, cancel := context.WithTimeout(s.shutCtx, 30*time.Second)
 	defer cancel()
@@ -1176,7 +1260,11 @@ func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, 
 		return
 	}
 
-	if err := s.store.BanIP(ctx, ip, s.responder.Name(), "auto-ban"); err != nil {
+	var expiresAt int64
+	if banTime > 0 {
+		expiresAt = now.Add(time.Duration(banTime) * time.Second).Unix()
+	}
+	if err := s.store.BanIP(ctx, ip, s.responder.Name(), "auto-ban", expiresAt); err != nil {
 		// BanIP uses INSERT WHERE NOT EXISTS: nil error means 0 rows (already banned).
 		// Any non-nil error here is a real DB failure.
 		slog.Error("auto-ban store", "ip", ip, "err", err)
@@ -1234,6 +1322,9 @@ func csvCell(s string) string {
 	}
 	return s
 }
+
+// maxBanDurationSecs caps ban TTLs at one year — beyond that, use a permanent ban.
+const maxBanDurationSecs = 365 * 24 * 3600
 
 func valOrZero(p *int64) int64 {
 	if p == nil {

@@ -12,6 +12,10 @@ const (
 	DefaultRetentionDays    = 90
 	DefaultAutoBanThreshold = 50
 	DefaultAutoBanWindow    = "1h"
+	// DefaultAutoBanBanTime is how long auto-bans last (seconds). Attacker IPs
+	// are mostly dynamic, so permanent auto-bans slowly poison the blocklist
+	// with addresses that long since moved on to legitimate owners.
+	DefaultAutoBanBanTime = int64(24 * 3600)
 )
 
 // Config holds all runtime configuration loaded from environment variables.
@@ -23,6 +27,7 @@ type Config struct {
 	Fail2BanLog         string
 	DBPath              string
 	GeoIPDB             string
+	ASNDB               string
 	RetentionDays       int
 	HomeLat             *float64
 	HomeLon             *float64
@@ -53,6 +58,11 @@ type Config struct {
 	NotifyRules         []string
 	LogLevel            slog.Level
 
+	// DemoMode replaces all log sources with a synthetic traffic generator —
+	// for evaluating the dashboard without a real server. Never enable in
+	// production: real logs are not read while it is on.
+	DemoMode bool
+
 	// ExtraIgnoreIPs holds allowlist entries added from the settings UI
 	// (persisted in the DB, key "security.ignore_ips"). They are unioned with
 	// IgnoreIPs at runtime — env/default entries can never be removed via UI.
@@ -62,6 +72,7 @@ type Config struct {
 	AutoBanEnabled   bool
 	AutoBanThreshold int
 	AutoBanWindow    string
+	AutoBanBanTime   int64 // seconds an auto-ban lasts; 0 = permanent
 
 	// fail2ban jail tuning managed from the UI (persisted in DB; 0 = not
 	// managed). Applied to the running fail2ban via its command socket.
@@ -79,6 +90,7 @@ func Load() (*Config, error) {
 		Fail2BanLog:         getEnv("LOGFORT_FAIL2BAN_LOG", ""),
 		DBPath:              getEnv("LOGFORT_DB_PATH", "/data/logfort.db"),
 		GeoIPDB:             getEnv("LOGFORT_GEOIP_DB", "/data/geo.mmdb"),
+		ASNDB:               getEnv("LOGFORT_ASN_DB", "/data/asn.mmdb"),
 		NftTable:            getEnv("LOGFORT_NFT_TABLE", "inet filter"),
 		NftSet:              getEnv("LOGFORT_NFT_SET", "logfort_block"),
 		Fail2BanJail:        getEnv("LOGFORT_FAIL2BAN_JAIL", "sshd"),
@@ -101,6 +113,7 @@ func Load() (*Config, error) {
 		// (e.g. transient read error at startup) never leaves zero values.
 		AutoBanThreshold: DefaultAutoBanThreshold,
 		AutoBanWindow:    DefaultAutoBanWindow,
+		AutoBanBanTime:   DefaultAutoBanBanTime,
 	}
 
 	// Log paths (comma-separated)
@@ -142,6 +155,8 @@ func Load() (*Config, error) {
 	if cfg.AuthEnabled && (cfg.AuthUser == "" || cfg.AuthPass == "") {
 		return nil, fmt.Errorf("LOGFORT_AUTH_ENABLED=true requires both LOGFORT_AUTH_USER and LOGFORT_AUTH_PASS to be set")
 	}
+
+	cfg.DemoMode = getEnvBool("LOGFORT_DEMO", false)
 
 	// Responder
 	cfg.ResponderEnabled = getEnvBool("LOGFORT_RESPONDER_ENABLED", false)
@@ -256,6 +271,12 @@ func (c *Config) OverlaySettings(s map[string]string) {
 	}
 	if c.AutoBanWindow == "" {
 		c.AutoBanWindow = DefaultAutoBanWindow
+	}
+	// "0" is a valid stored value here — it means permanent auto-bans.
+	if v := s["autoban.bantime"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			c.AutoBanBanTime = n
+		}
 	}
 
 	// fail2ban jail tuning — purely UI-controlled, always overlay from DB.

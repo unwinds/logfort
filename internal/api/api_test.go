@@ -22,9 +22,11 @@ import (
 // mockStore is a minimal in-memory store for API tests.
 type mockStore struct {
 	bannedIPs   []string
+	banExpiries []int64 // expiresAt passed to BanIP, parallel to bannedIPs
 	unbannedIPs []string
 	saved       map[string]string // records SetSettings writes
 	pingErr     error             // returned by Ping (health db probe)
+	statsCalls  int               // GetStats invocations (stats cache tests)
 }
 
 func (m *mockStore) InsertEvent(_ context.Context, _ *parse.Event) error { return nil }
@@ -32,6 +34,7 @@ func (m *mockStore) ListEvents(_ context.Context, _ store.EventQuery) ([]store.E
 	return []store.EventRow{}, 0, nil
 }
 func (m *mockStore) GetStats(_ context.Context, _ string) (*store.Stats, error) {
+	m.statsCalls++
 	return &store.Stats{
 		TopIPs: []store.TopIP{}, TopCountries: []store.TopCountry{},
 		TopUsernames: []store.TopUsername{}, Timeline: []store.TimeBucket{},
@@ -44,9 +47,13 @@ func (m *mockStore) GetMapPoints(_ context.Context, _ string) ([]store.MapPoint,
 	return []store.MapPoint{}, nil
 }
 func (m *mockStore) DeleteOldEvents(_ context.Context, _ int) (int64, error) { return 0, nil }
-func (m *mockStore) BanIP(_ context.Context, ip, _, _ string) error {
+func (m *mockStore) BanIP(_ context.Context, ip, _, _ string, expiresAt int64) error {
 	m.bannedIPs = append(m.bannedIPs, ip)
+	m.banExpiries = append(m.banExpiries, expiresAt)
 	return nil
+}
+func (m *mockStore) ListExpiredBans(_ context.Context, _ time.Time) ([]store.BanRow, error) {
+	return []store.BanRow{}, nil
 }
 func (m *mockStore) UnbanIP(_ context.Context, ip string) error {
 	m.unbannedIPs = append(m.unbannedIPs, ip)
@@ -186,6 +193,38 @@ func TestBanPost_Success(t *testing.T) {
 	}
 	if len(ms.bannedIPs) != 1 || ms.bannedIPs[0] != "203.0.113.5" {
 		t.Errorf("store.BanIP not called: %v", ms.bannedIPs)
+	}
+}
+
+func TestBanPost_Duration(t *testing.T) {
+	srv, ms, _ := newTestServer(t, true)
+
+	before := time.Now().Add(3600 * time.Second).Unix()
+	w := postJSON(t, srv, "/api/ban", map[string]any{"ip": "203.0.113.5", "duration_secs": 3600})
+	after := time.Now().Add(3600 * time.Second).Unix()
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(ms.banExpiries) != 1 {
+		t.Fatalf("store.BanIP not called: %v", ms.banExpiries)
+	}
+	if got := ms.banExpiries[0]; got < before || got > after {
+		t.Errorf("expiresAt %d not within [%d, %d]", got, before, after)
+	}
+
+	// duration_secs = 0 (or absent) → permanent ban, expiresAt 0.
+	w = postJSON(t, srv, "/api/ban", map[string]any{"ip": "203.0.113.6"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := ms.banExpiries[1]; got != 0 {
+		t.Errorf("permanent ban must pass expiresAt=0, got %d", got)
+	}
+
+	// Out-of-range duration is a client error.
+	w = postJSON(t, srv, "/api/ban", map[string]any{"ip": "203.0.113.7", "duration_secs": -5})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("negative duration: want 400, got %d", w.Code)
 	}
 }
 

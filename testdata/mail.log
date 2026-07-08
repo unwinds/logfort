@@ -1,0 +1,7 @@
+Jun 21 14:40:01 mail postfix/smtpd[21001]: warning: unknown[203.0.113.50]: SASL LOGIN authentication failed: authentication failure
+Jun 21 14:40:05 mail postfix/smtpd[21001]: warning: host.example.com[198.51.100.60]: SASL PLAIN authentication failed: authentication failure, sasl_username=admin@example.com
+Jun 21 14:40:09 mail postfix/smtpd[21002]: connect from unknown[203.0.113.50]
+Jun 21 14:41:00 mail dovecot: imap-login: Disconnected: Connection closed (auth failed, 1 attempts in 2 secs): user=<admin>, method=PLAIN, rip=203.0.113.51, lip=10.0.0.5, session=<abcDEF123>
+Jun 21 14:41:10 mail dovecot: pop3-login: Aborted login (auth failed, 3 attempts in 10 secs): user=<test>, method=PLAIN, rip=198.51.100.61, lip=10.0.0.5
+Jun 21 14:41:20 mail dovecot: imap-login: Disconnected: Connection closed (no auth attempts in 5 secs): user=<>, rip=203.0.113.52, lip=10.0.0.5
+Jun 21 14:41:30 mail dovecot: imap(bob)<21100><xyz>: Logged out in=100 out=200

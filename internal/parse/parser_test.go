@@ -322,6 +322,99 @@ func TestParseFixtureFile(t *testing.T) {
 	}
 }
 
+func TestParseMailLines(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		wantIP     string
+		wantUser   string
+		wantSource string
+		wantErr    error
+	}{
+		{
+			name:       "postfix SASL LOGIN failure, unknown host",
+			line:       "Jun 21 14:40:01 mail postfix/smtpd[21001]: warning: unknown[203.0.113.50]: SASL LOGIN authentication failed: authentication failure",
+			wantIP:     "203.0.113.50",
+			wantSource: "postfix",
+		},
+		{
+			name:       "postfix SASL PLAIN failure with sasl_username",
+			line:       "Jun 21 14:40:05 mail postfix/smtpd[21001]: warning: host.example.com[198.51.100.60]: SASL PLAIN authentication failed: authentication failure, sasl_username=admin@example.com",
+			wantIP:     "198.51.100.60",
+			wantUser:   "admin@example.com",
+			wantSource: "postfix",
+		},
+		{
+			name:       "postfix multi-instance submission smtpd",
+			line:       "Jun 21 14:40:06 mail postfix/submission/smtpd[21003]: warning: unknown[203.0.113.55]: SASL LOGIN authentication failed: VXNlcm5hbWU6",
+			wantIP:     "203.0.113.55",
+			wantSource: "postfix",
+		},
+		{
+			name:    "postfix connect line is not an auth event",
+			line:    "Jun 21 14:40:09 mail postfix/smtpd[21002]: connect from unknown[203.0.113.50]",
+			wantErr: parse.ErrNoMatch,
+		},
+		{
+			name:       "dovecot imap-login auth failed",
+			line:       "Jun 21 14:41:00 mail dovecot: imap-login: Disconnected: Connection closed (auth failed, 1 attempts in 2 secs): user=<admin>, method=PLAIN, rip=203.0.113.51, lip=10.0.0.5, session=<abcDEF123>",
+			wantIP:     "203.0.113.51",
+			wantUser:   "admin",
+			wantSource: "dovecot",
+		},
+		{
+			name:       "dovecot pop3-login aborted login",
+			line:       "Jun 21 14:41:10 mail dovecot: pop3-login: Aborted login (auth failed, 3 attempts in 10 secs): user=<test>, method=PLAIN, rip=198.51.100.61, lip=10.0.0.5",
+			wantIP:     "198.51.100.61",
+			wantUser:   "test",
+			wantSource: "dovecot",
+		},
+		{
+			name:    "dovecot no auth attempts is not an auth event",
+			line:    "Jun 21 14:41:20 mail dovecot: imap-login: Disconnected: Connection closed (no auth attempts in 5 secs): user=<>, rip=203.0.113.52, lip=10.0.0.5",
+			wantErr: parse.ErrNoMatch,
+		},
+		{
+			name:    "dovecot logout line is not an auth event",
+			line:    "Jun 21 14:41:30 mail dovecot: imap(bob)<21100><xyz>: Logged out in=100 out=200",
+			wantErr: parse.ErrNoMatch,
+		},
+		{
+			name:       "RFC3339 prefix (journald-reconstructed) postfix line",
+			line:       "2026-06-21T14:40:01Z mail postfix/smtpd[21001]: warning: unknown[203.0.113.50]: SASL LOGIN authentication failed: authentication failure",
+			wantIP:     "203.0.113.50",
+			wantSource: "postfix",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, err := parse.ParseLine(tt.line)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("want err %v, got %v (ev=%+v)", tt.wantErr, err, ev)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ev.EventType != "mail_auth_fail" {
+				t.Errorf("EventType: got %q, want mail_auth_fail", ev.EventType)
+			}
+			if ev.IP != tt.wantIP {
+				t.Errorf("IP: got %q, want %q", ev.IP, tt.wantIP)
+			}
+			if ev.Username != tt.wantUser {
+				t.Errorf("Username: got %q, want %q", ev.Username, tt.wantUser)
+			}
+			if ev.Source != tt.wantSource {
+				t.Errorf("Source: got %q, want %q", ev.Source, tt.wantSource)
+			}
+		})
+	}
+}
+
 func TestParseNginxLines(t *testing.T) {
 	tests := []struct {
 		name     string
