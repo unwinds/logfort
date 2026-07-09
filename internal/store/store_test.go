@@ -436,6 +436,43 @@ func TestInsertEvent_Dedup(t *testing.T) {
 	}
 }
 
+// TestInsertEvent_DedupAuditEvents guards against IP-less local-audit events
+// (empty ip, no port) colliding in the dedup index. Before migration 008 they
+// keyed on just (ts, event_type) and distinct same-second lines were dropped.
+func TestInsertEvent_DedupAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	audit := func(user, detail string) *parse.Event {
+		return &parse.Event{TS: now, EventType: "sudo_fail", Username: user, Detail: detail, Source: "sudo", Raw: user + detail}
+	}
+
+	// Two different users failing sudo in the same second: both must persist.
+	if err := s.InsertEvent(ctx, audit("bob", "1 incorrect password attempt: /bin/su")); err != nil {
+		t.Fatalf("insert bob: %v", err)
+	}
+	if err := s.InsertEvent(ctx, audit("eve", "user NOT in sudoers: /bin/bash")); err != nil {
+		t.Fatalf("insert eve (distinct user): %v", err)
+	}
+	// Same user, same second, different command (distinct detail): must persist.
+	if err := s.InsertEvent(ctx, audit("bob", "2 incorrect password attempts: /usr/bin/id")); err != nil {
+		t.Fatalf("insert bob (distinct detail): %v", err)
+	}
+	// A byte-for-byte identical line (e.g. a restart log re-read) must dedup.
+	if err := s.InsertEvent(ctx, audit("bob", "1 incorrect password attempt: /bin/su")); !errors.Is(err, store.ErrDuplicate) {
+		t.Fatalf("re-read of identical line: want ErrDuplicate, got %v", err)
+	}
+
+	_, total, err := s.ListEvents(ctx, store.EventQuery{EventType: "sudo_fail", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("want 3 distinct audit rows, got %d", total)
+	}
+}
+
 func TestBanIPAndUnbanIP(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

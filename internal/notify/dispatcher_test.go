@@ -30,7 +30,8 @@ type stubStore struct {
 func (s *stubStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return s.countResult, nil
 }
-func (s *stubStore) InsertEvent(context.Context, *parse.Event) error { return nil }
+func (s *stubStore) GetIPInfo(context.Context, string) (*store.IPInfo, error) { return nil, nil }
+func (s *stubStore) InsertEvent(context.Context, *parse.Event) error          { return nil }
 func (s *stubStore) ListEvents(context.Context, store.EventQuery) ([]store.EventRow, int64, error) {
 	return nil, 0, nil
 }

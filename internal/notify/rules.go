@@ -99,6 +99,37 @@ func (r *newCountryRule) match(_ context.Context, ev *parse.Event, _ store.Store
 	}
 }
 
+// --- sudo (local privilege / account audit) ---
+
+// sudoRule alerts on privilege-escalation failures and account changes. A
+// successful sudo command (sudo_session) is deliberately not alerted — on an
+// active server that would be constant noise.
+type sudoRule struct{}
+
+func (sudoRule) match(_ context.Context, ev *parse.Event, _ store.Store) *Message {
+	var title string
+	switch ev.EventType {
+	case "sudo_fail":
+		title = "Privilege: sudo failure"
+	case "user_add":
+		title = "Account: user created"
+	case "user_del":
+		title = "Account: user deleted"
+	default:
+		return nil
+	}
+	body := ev.Username
+	if ev.Detail != "" {
+		body += " — " + ev.Detail
+	}
+	return &Message{
+		Title:     title,
+		Body:      body,
+		EventType: ev.EventType,
+		TS:        ev.TS.Unix(),
+	}
+}
+
 // --- threshold:N/Xh ---
 
 type thresholdRule struct {
@@ -152,6 +183,8 @@ func parseRules(strs []string) ([]rule, []digestSchedule, error) {
 			rules = append(rules, banRule{})
 		case s == "new_country":
 			rules = append(rules, &newCountryRule{})
+		case s == "sudo":
+			rules = append(rules, sudoRule{})
 		case strings.HasPrefix(s, "threshold:"):
 			r, err := parseThresholdRule(s)
 			if err != nil {
@@ -165,7 +198,7 @@ func parseRules(strs []string) ([]rule, []digestSchedule, error) {
 			}
 			digests = append(digests, ds)
 		default:
-			return nil, nil, fmt.Errorf("unknown notify rule %q; valid: accepted_login, ban, new_country, threshold:N/dur, digest:daily, digest:weekly", s)
+			return nil, nil, fmt.Errorf("unknown notify rule %q; valid: accepted_login, ban, new_country, sudo, threshold:N/dur, digest:daily, digest:weekly", s)
 		}
 	}
 	return rules, digests, nil

@@ -156,12 +156,12 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 	}
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO events(ts, ip, event_type, username, user_valid, auth_method, port, source, country, city, lat, lon, asn, raw)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		INSERT OR IGNORE INTO events(ts, ip, event_type, username, user_valid, auth_method, port, source, country, city, lat, lon, asn, detail, threat, raw)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		e.TS.Unix(), e.IP, e.EventType, nullStr(e.Username), userValid,
 		nullStr(e.AuthMethod), nullInt(e.Port), e.Source,
 		nullStr(e.Geo.Country), nullStr(e.Geo.City), lat, lon, nullStr(e.Geo.ASN),
-		nullStr(e.Raw),
+		nullStr(e.Detail), nullStr(e.Threat), nullStr(e.Raw),
 	)
 	if err != nil {
 		return fmt.Errorf("insert event: %w", err)
@@ -211,7 +211,7 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 	countArgs := len(args)
 	args = append(args, limit, q.Offset)
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id,ts,ip,event_type,username,user_valid,auth_method,port,source,country,city,lat,lon,asn FROM events"+
+		"SELECT id,ts,ip,event_type,username,user_valid,auth_method,port,source,country,city,lat,lon,asn,detail,threat FROM events"+
 			where+" ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?", args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query events: %w", err)
@@ -223,12 +223,12 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 	for rows.Next() {
 		var e EventRow
 		var userValid sql.NullInt64
-		var country, city, authMethod, username, asn sql.NullString
+		var country, city, authMethod, username, asn, detail, threat sql.NullString
 		var lat, lon sql.NullFloat64
 		var port sql.NullInt64
 		if err := rows.Scan(&e.ID, &e.TS, &e.IP, &e.EventType,
 			&username, &userValid, &authMethod, &port,
-			&e.Source, &country, &city, &lat, &lon, &asn); err != nil {
+			&e.Source, &country, &city, &lat, &lon, &asn, &detail, &threat); err != nil {
 			return nil, 0, fmt.Errorf("scan event: %w", err)
 		}
 		e.Username = username.String
@@ -236,6 +236,8 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 		e.Country = country.String
 		e.City = city.String
 		e.ASN = asn.String
+		e.Detail = detail.String
+		e.Threat = threat.String
 		if port.Valid {
 			e.Port = int(port.Int64)
 		}
@@ -277,12 +279,14 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 		Timeline:     []TimeBucket{},
 	}
 
-	// Total attempts (non-ban/unban events)
+	// Attack stats exclude ban/unban bookkeeping and local audit events (sudo,
+	// account changes) — the latter have no source IP and are not remote attacks,
+	// so counting them would skew every figure and add an empty-IP row to the tops.
 	baseWhere := whereTS
 	if baseWhere == "" {
-		baseWhere = " WHERE event_type NOT IN ('ban','unban')"
+		baseWhere = " WHERE event_type NOT IN (" + nonAttemptTypes + ")"
 	} else {
-		baseWhere += " AND event_type NOT IN ('ban','unban')"
+		baseWhere += " AND event_type NOT IN (" + nonAttemptTypes + ")"
 	}
 
 	scanInt := func(query string, a ...any) (int64, error) {
@@ -450,7 +454,7 @@ func (s *SQLiteStore) GetMapPoints(ctx context.Context, window string) ([]MapPoi
 	}
 
 	args := []any{}
-	where := " WHERE lat IS NOT NULL AND lon IS NOT NULL AND event_type NOT IN ('ban','unban')"
+	where := " WHERE lat IS NOT NULL AND lon IS NOT NULL AND event_type NOT IN (" + nonAttemptTypes + ")"
 	if since > 0 {
 		where += " AND ts >= ?"
 		args = append(args, since)
@@ -512,6 +516,60 @@ func (s *SQLiteStore) UnbanIP(ctx context.Context, ip string) error {
 		time.Now().Unix(), ip,
 	)
 	return err
+}
+
+// nonAttemptTypes is the SQL IN-list of event types excluded from attack
+// statistics: ban/unban bookkeeping and local privilege-audit events, which
+// carry no source IP and are not remote attacks.
+const nonAttemptTypes = "'ban','unban','sudo_session','sudo_fail','user_add','user_del'"
+
+// GetIPInfo returns an aggregate profile for a single IP address.
+func (s *SQLiteStore) GetIPInfo(ctx context.Context, ip string) (*IPInfo, error) {
+	info := &IPInfo{IP: ip, TypeCounts: map[string]int64{}}
+
+	var first, last sql.NullInt64
+	var country, city, asn, threat sql.NullString
+	var lat, lon sql.NullFloat64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT MIN(ts), MAX(ts), COUNT(*),
+		       MAX(country), MAX(city), MAX(lat), MAX(lon), MAX(asn), MAX(threat)
+		FROM events WHERE ip = ?`, ip).
+		Scan(&first, &last, &info.Total, &country, &city, &lat, &lon, &asn, &threat)
+	if err != nil {
+		return nil, fmt.Errorf("ip info: %w", err)
+	}
+	if first.Valid {
+		info.FirstSeen = first.Int64
+	}
+	if last.Valid {
+		info.LastSeen = last.Int64
+	}
+	info.Country = country.String
+	info.City = city.String
+	info.ASN = asn.String
+	info.Threat = threat.String
+	if lat.Valid {
+		info.Lat = &lat.Float64
+	}
+	if lon.Valid {
+		info.Lon = &lon.Float64
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT event_type, COUNT(*) FROM events WHERE ip = ? GROUP BY event_type", ip)
+	if err != nil {
+		return nil, fmt.Errorf("ip info types: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t string
+		var c int64
+		if err := rows.Scan(&t, &c); err != nil {
+			return nil, err
+		}
+		info.TypeCounts[t] = c
+	}
+	return info, rows.Err()
 }
 
 // CountIPEvents returns the number of actual failed authentication attempts

@@ -28,6 +28,10 @@ type Config struct {
 	DBPath              string
 	GeoIPDB             string
 	ASNDB               string
+	Blocklist           string   // path to a local IP/CIDR blocklist file (empty = disabled)
+	BlocklistAutoBan    bool     // immediately ban IPs found in the blocklist (needs responder)
+	TLSWatch            []string // host[:port] endpoints to monitor for cert expiry
+	PortsWatch          bool     // watch locally-listening TCP ports for new openings
 	RetentionDays       int
 	HomeLat             *float64
 	HomeLon             *float64
@@ -91,6 +95,9 @@ func Load() (*Config, error) {
 		DBPath:              getEnv("LOGFORT_DB_PATH", "/data/logfort.db"),
 		GeoIPDB:             getEnv("LOGFORT_GEOIP_DB", "/data/geo.mmdb"),
 		ASNDB:               getEnv("LOGFORT_ASN_DB", "/data/asn.mmdb"),
+		Blocklist:           getEnv("LOGFORT_BLOCKLIST", ""),
+		BlocklistAutoBan:    getEnvBool("LOGFORT_BLOCKLIST_AUTOBAN", false),
+		PortsWatch:          getEnvBool("LOGFORT_PORTS_WATCH", false),
 		NftTable:            getEnv("LOGFORT_NFT_TABLE", "inet filter"),
 		NftSet:              getEnv("LOGFORT_NFT_SET", "logfort_block"),
 		Fail2BanJail:        getEnv("LOGFORT_FAIL2BAN_JAIL", "sshd"),
@@ -171,6 +178,9 @@ func Load() (*Config, error) {
 			}
 		}
 	}
+
+	// TLS endpoints to monitor for certificate expiry (comma-separated).
+	cfg.TLSWatch = SplitList(getEnv("LOGFORT_TLS_WATCH", ""))
 
 	// Notify rules
 	if raw := getEnv("LOGFORT_NOTIFY_RULES", ""); raw != "" {

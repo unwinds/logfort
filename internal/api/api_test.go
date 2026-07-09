@@ -62,6 +62,9 @@ func (m *mockStore) UnbanIP(_ context.Context, ip string) error {
 func (m *mockStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
+func (m *mockStore) GetIPInfo(_ context.Context, ip string) (*store.IPInfo, error) {
+	return &store.IPInfo{IP: ip, TypeCounts: map[string]int64{}}, nil
+}
 func (m *mockStore) GetSetting(_ context.Context, _ string) (string, bool, error) {
 	return "", false, nil
 }

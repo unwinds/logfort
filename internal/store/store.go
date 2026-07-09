@@ -36,6 +36,9 @@ type Store interface {
 	// (invalid_user, pam_failure, disconnect_preauth) are excluded to keep
 	// the count equal to real attempts.
 	CountIPEvents(ctx context.Context, ip string, since time.Time) (int64, error)
+	// GetIPInfo returns an aggregate profile for a single IP: first/last seen,
+	// total events, per-type counts, and the most recent geo/asn/threat data.
+	GetIPInfo(ctx context.Context, ip string) (*IPInfo, error)
 	// GetSetting returns the value for key. found is false when the key does not exist.
 	GetSetting(ctx context.Context, key string) (value string, found bool, err error)
 	// SetSetting upserts a key-value pair in the settings table.
@@ -90,6 +93,23 @@ type EventRow struct {
 	Lat        *float64 `json:"lat,omitempty"`
 	Lon        *float64 `json:"lon,omitempty"`
 	ASN        string   `json:"asn,omitempty"`
+	Detail     string   `json:"detail,omitempty"`
+	Threat     string   `json:"threat,omitempty"`
+}
+
+// IPInfo is an aggregate profile for a single IP address (the drill-down view).
+type IPInfo struct {
+	IP         string           `json:"ip"`
+	FirstSeen  int64            `json:"first_seen,omitempty"`
+	LastSeen   int64            `json:"last_seen,omitempty"`
+	Total      int64            `json:"total"`
+	Country    string           `json:"country,omitempty"`
+	City       string           `json:"city,omitempty"`
+	Lat        *float64         `json:"lat,omitempty"`
+	Lon        *float64         `json:"lon,omitempty"`
+	ASN        string           `json:"asn,omitempty"`
+	Threat     string           `json:"threat,omitempty"`
+	TypeCounts map[string]int64 `json:"type_counts"`
 }
 
 // BanRow is the JSON-serialisable form of a ban record.

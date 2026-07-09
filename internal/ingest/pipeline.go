@@ -11,6 +11,7 @@ import (
 	"github.com/unwinds/logfort/internal/geo"
 	"github.com/unwinds/logfort/internal/parse"
 	"github.com/unwinds/logfort/internal/store"
+	"github.com/unwinds/logfort/internal/threat"
 )
 
 // Pipeline connects one or more Sources to the store via a parse worker pool.
@@ -19,6 +20,7 @@ type Pipeline struct {
 	parseFunc func(string) (*parse.Event, error)
 	store     store.Store
 	geo       geo.Looker
+	blocklist *threat.List
 	workers   int
 	publish   func(*parse.Event) // optional SSE hook (nil = no-op)
 
@@ -47,6 +49,11 @@ func NewPipeline(sources []Source, parseFunc func(string) (*parse.Event, error),
 // SetGeo wires a GeoIP looker into the pipeline.
 // If not set, geo fields are left empty.
 func (p *Pipeline) SetGeo(g geo.Looker) { p.geo = g }
+
+// SetBlocklist wires a threat blocklist into the pipeline. When set, each
+// event's source IP is checked and Event.Threat is filled with the list name on
+// a match. Nil-safe: a nil list is a no-op.
+func (p *Pipeline) SetBlocklist(l *threat.List) { p.blocklist = l }
 
 // SetPublishHook sets a function called for every successfully parsed event.
 // Used by the SSE hub (v0.3+).
@@ -134,6 +141,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 					ev.Geo.Lat = info.Lat
 					ev.Geo.Lon = info.Lon
 					ev.Geo.ASN = info.ASN
+				}
+				if p.blocklist != nil && ev.IP != "" {
+					ev.Threat = p.blocklist.Lookup(ev.IP)
 				}
 				if err := p.store.InsertEvent(ctx, ev); err != nil {
 					if errors.Is(err, store.ErrDuplicate) {

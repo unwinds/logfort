@@ -80,6 +80,9 @@ func (s *stubStore) ListExpiredBans(_ context.Context, _ time.Time) ([]store.Ban
 func (s *stubStore) CountIPEvents(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
+func (s *stubStore) GetIPInfo(_ context.Context, ip string) (*store.IPInfo, error) {
+	return &store.IPInfo{IP: ip, TypeCounts: map[string]int64{}}, nil
+}
 func (s *stubStore) GetSetting(_ context.Context, _ string) (string, bool, error) {
 	return "", false, nil
 }

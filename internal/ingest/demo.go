@@ -104,9 +104,18 @@ func demoLine(rng *rand.Rand, ts time.Time, pickIP func() string) string {
 	pid := rng.Intn(30000) + 1000
 
 	switch v := rng.Intn(100); {
-	case v < 50: // sshd failed password
+	case v < 44: // sshd failed password
 		return fmt.Sprintf("%s demo sshd[%d]: Failed password for invalid user %s from %s port %d ssh2",
 			sysTS, pid, user, ip, port)
+	case v < 47: // sudo failure (local privilege audit)
+		return fmt.Sprintf("%s demo sudo:    %s : 1 incorrect password attempt ; TTY=pts/0 ; PWD=/home/%s ; USER=root ; COMMAND=/usr/bin/su",
+			sysTS, user, user)
+	case v < 49: // sudo success
+		return fmt.Sprintf("%s demo sudo:    deploy : TTY=pts/1 ; PWD=/home/deploy ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx",
+			sysTS)
+	case v < 50: // new local account
+		return fmt.Sprintf("%s demo useradd[%d]: new user: name=svc-%d, UID=%d, GID=100, home=/home/svc, shell=/bin/bash",
+			sysTS, pid, rng.Intn(99), 1000+rng.Intn(500))
 	case v < 60: // sshd invalid user
 		return fmt.Sprintf("%s demo sshd[%d]: Invalid user %s from %s port %d",
 			sysTS, pid, user, ip, port)

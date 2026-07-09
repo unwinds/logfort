@@ -331,6 +331,33 @@
     .empty-state { display:flex; align-items:center; justify-content:center; height:120px; color:var(--muted); font-size:13px; }
     .error-msg { padding:20px; color:var(--danger); font-size:13px; text-align:center; }
 
+    /* === THREAT / AUDIT ==================================================== */
+    .threat-badge { color:var(--danger); font-weight:700; cursor:help; margin-left:4px; }
+    .badge-audit { background:rgba(180,142,220,.14); color:#b48edc; }
+
+    /* === HOST VITALS (topbar chips) ======================================= */
+    .host-vitals { display:flex; align-items:center; gap:10px; font-size:11px; font-family:'SF Mono','Fira Code',monospace; color:var(--muted); }
+    .host-vitals span { white-space:nowrap; }
+    .host-vitals span.vit-crit { color:var(--danger); font-weight:700; }
+
+    /* === IP PROFILE MODAL ================================================= */
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:2000; display:flex; align-items:center; justify-content:center; padding:20px; }
+    .modal-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); width:min(680px,100%); max-height:85vh; display:flex; flex-direction:column; overflow:hidden; }
+    .modal-hd { display:flex; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--border); background:var(--surface2); }
+    .modal-hd .ip { font-size:15px; }
+    .modal-close { margin-left:auto; background:none; border:none; color:var(--muted); font-size:15px; cursor:pointer; padding:2px 9px; border-radius:6px; line-height:1; }
+    .modal-close:hover { background:var(--adim); color:var(--text); }
+    .modal-body { padding:16px 18px; overflow-y:auto; }
+    .ipp-actions { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+    .ipp-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; margin-bottom:6px; }
+    .ipp-row { display:flex; justify-content:space-between; gap:12px; font-size:12px; padding:6px 0; border-bottom:1px solid var(--border); }
+    .ipp-key { color:var(--muted); white-space:nowrap; }
+    .ipp-val { font-family:monospace; text-align:right; word-break:break-all; }
+    .ipp-section-hd { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin:16px 0 8px; }
+    .ipp-types { display:flex; flex-wrap:wrap; gap:6px; }
+    .ipp-type { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:2px 8px 2px 4px; border-radius:10px; background:var(--surface2); border:1px solid var(--border); }
+    @media (max-width:700px) { .ipp-grid { grid-template-columns:1fr; } .host-vitals { display:none !important; } }
+
     /* === MOBILE ============================================================ */
     @media (max-width:700px) {
       .sidebar { display:none; }
@@ -409,6 +436,7 @@
   <div class="topbar">
     <span class="topbar-title" id="topbar-title">Dashboard</span>
     <div class="spacer"></div>
+    <span id="host-vitals" class="host-vitals" style="display:none;"></span>
     <span id="live-badge" class="live-badge offline">LIVE</span>
     <select id="window-select" onchange="loadAll()">
       <option value="1h">Last 1h</option>
@@ -471,6 +499,10 @@
           <option value="disconnect_preauth">disconnect_preauth</option>
           <option value="http_auth_fail">http_auth_fail</option>
           <option value="mail_auth_fail">mail_auth_fail</option>
+          <option value="sudo_session">sudo_session</option>
+          <option value="sudo_fail">sudo_fail</option>
+          <option value="user_add">user_add</option>
+          <option value="user_del">user_del</option>
           <option value="ban">ban</option>
           <option value="unban">unban</option>
         </select>
@@ -590,6 +622,20 @@
               <div class="settings-fields" style="gap:6px;">
                 <div class="sysinfo-row"><span class="sysinfo-key">Version</span><span class="sysinfo-val" id="about-version">—</span></div>
                 <div class="sysinfo-row"><span class="sysinfo-key">Uptime</span><span class="sysinfo-val" id="about-uptime">—</span></div>
+              </div>
+            </div>
+
+            <!-- Host vitals -->
+            <div class="settings-card wide" id="host-card">
+              <div class="settings-card-hd">
+                <div class="card-icon" style="background:rgba(136,192,208,.12);">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="var(--accent)"><path d="M2 3h12a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1zm0 1v6h12V4H2zm2 9h8v1H4v-1z"/></svg>
+                </div>
+                <h3>Host Vitals</h3>
+                <span style="margin-left:auto;font-size:11px;color:var(--muted)">live</span>
+              </div>
+              <div class="settings-fields" id="host-vitals-rows">
+                <div class="sysinfo-row"><span class="sysinfo-key">Loading…</span></div>
               </div>
             </div>
 
@@ -805,6 +851,10 @@
                   <label class="rule-item">
                     <input type="checkbox" id="rule-country">
                     <div class="rule-desc">New country<small>Alert on first login attempt from a new country</small></div>
+                  </label>
+                  <label class="rule-item">
+                    <input type="checkbox" id="rule-sudo">
+                    <div class="rule-desc">Privilege events<small>Alert on failed sudo and account creation/deletion</small></div>
                   </label>
                   <label class="rule-item">
                     <input type="checkbox" id="rule-threshold">
@@ -1032,6 +1082,17 @@
   </div><!-- /content -->
 </div><!-- /main-area -->
 
+<!-- IP profile modal -->
+<div id="ip-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeIPProfile()">
+  <div class="modal-card">
+    <div class="modal-hd">
+      <span id="ip-modal-title" class="ip">—</span>
+      <button class="modal-close" onclick="closeIPProfile()" title="Close">&#10005;</button>
+    </div>
+    <div class="modal-body" id="ip-modal-body"><div class="empty-state">Loading…</div></div>
+  </div>
+</div>
+
 <!-- Mobile nav -->
 <nav class="mobile-nav">
   <button class="mobile-nav-item active" onclick="switchSection('dashboard')" id="mnav-dashboard"><span class="mobile-nav-icon">⊞</span>Dash</button>
@@ -1158,7 +1219,7 @@ async function loadStats() {
     document.getElementById('stat-banned').textContent   = fmt(d.currently_banned);
     lastTimeline = {buckets: d.timeline, win: w, secs: d.bucket_secs};
     drawTimeline(d.timeline, w, d.bucket_secs);
-    renderTopList('top-ips',       'Top Attacker IPs', d.top_ips,       t=>`<span class="name ip ip-link" onclick="filterByIP('${esc(t.ip)}')" title="Show all events from this IP">${esc(t.ip)}</span>`, t=>t.count);
+    renderTopList('top-ips',       'Top Attacker IPs', d.top_ips,       t=>`<span class="name ip ip-link" onclick="openIPProfile('${esc(t.ip)}')" title="Show IP profile">${esc(t.ip)}</span>`, t=>t.count);
     renderTopList('top-usernames', 'Top Usernames',    d.top_usernames, t=>`<span class="name user">${esc(t.username)}</span>`,t=>t.count);
     renderTopList('top-countries', 'Top Countries',    d.top_countries, t=>`<span class="name">${esc(t.country||'—')}</span>`, t=>t.count);
   } catch(e) { console.error('stats',e); }
@@ -1177,10 +1238,24 @@ function renderTopList(id, title, items, labelFn, countFn) {
 
 // ── Events ─────────────────────────────────────────────────────────────────
 function badgeClass(t) {
-  if (t==='accepted') return 'badge-accepted';
-  if (t==='ban')      return 'badge-ban';
-  if (t==='unban')    return 'badge-unban';
+  if (t==='accepted')     return 'badge-accepted';
+  if (t==='ban')          return 'badge-ban';
+  if (t==='unban')        return 'badge-unban';
+  if (t==='sudo_session') return 'badge-audit';
+  if (t==='sudo_fail' || t==='user_add' || t==='user_del') return 'badge-ban';
   return t ? 'badge-failed' : 'badge-other';
+}
+
+// ipCell renders an IP as a profile link plus an optional threat-blocklist flag.
+function ipCell(ip, threat) {
+  const flag = threat ? ` <span class="threat-badge" title="On threat blocklist: ${esc(threat)}">&#9888;</span>` : '';
+  return `<span class="ip-link" onclick="openIPProfile('${esc(ip)}')" title="Show IP profile">${esc(ip)}</span>${flag}`;
+}
+
+// userCell renders the username plus any audit detail (sudo command, uid/shell).
+function userCell(username, detail) {
+  const d = detail ? ` <span style="color:var(--muted);font-weight:400;">${esc(detail)}</span>` : '';
+  return `${esc(username||'')}${d}`;
 }
 
 function fmtTS(unix) {
@@ -1190,14 +1265,14 @@ function fmtTS(unix) {
 }
 
 function eventRowHTML(e) {
-  const banBtn = (responderEnabled && e.event_type!=='ban' && e.event_type!=='unban')
+  const banBtn = (responderEnabled && e.ip && e.event_type!=='ban' && e.event_type!=='unban')
     ? `<button class="btn btn-danger" style="padding:2px 7px;font-size:10px;" onclick="banIP('${esc(e.ip)}','')">Ban</button>` : '';
   return `<tr>
     <td class="ts">${fmtTS(e.ts)}</td>
     <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
-    <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(e.ip)}')" title="Show all events from this IP">${esc(e.ip)}</span></td>
+    <td class="ip">${e.ip?ipCell(e.ip,e.threat):''}</td>
     <td class="geo">${esc(e.country||'')}</td>
-    <td class="user">${esc(e.username||'')}</td>
+    <td class="user">${userCell(e.username,e.detail)}</td>
     <td style="color:var(--muted)">${e.port||''}</td>
     <td class="geo">${esc(e.source)}</td>
     <td class="geo asn-cell" title="${esc(e.asn||'')}">${esc(e.asn||'')}</td>
@@ -1308,6 +1383,55 @@ function renderSourceBanner(sources) {
   banner.style.display = 'block';
 }
 
+// ── Host vitals ──────────────────────────────────────────────────────────────
+async function loadVitals() {
+  try {
+    const d = await fetch('/api/vitals').then(r=>r.json());
+    const chips = document.getElementById('host-vitals');
+    if (d.available) {
+      const critCls = d.disk_used_percent>=90 ? 'vit-crit' : '';
+      chips.innerHTML =
+        `<span title="CPU load">CPU ${(d.cpu_percent||0).toFixed(0)}%</span>` +
+        `<span title="Memory used">MEM ${(d.mem_used_percent||0).toFixed(0)}%</span>` +
+        `<span class="${critCls}" title="Disk ${esc(d.disk_path||'')}">DISK ${(d.disk_used_percent||0).toFixed(0)}%</span>`;
+      chips.style.display = '';
+    } else {
+      chips.style.display = 'none';
+    }
+    renderVitalsCard(d);
+  } catch { document.getElementById('host-vitals').style.display='none'; }
+}
+
+// Renders the detailed Host card in Settings → General (if that card is mounted).
+function renderVitalsCard(d) {
+  const el = document.getElementById('host-vitals-rows');
+  if (!el) return;
+  const rows = [];
+  if (d.available) {
+    rows.push({k:'CPU', v:(d.cpu_percent||0).toFixed(1)+'%'+(d.num_cpu?` (${d.num_cpu} cores)`:''), cls:d.cpu_percent>=90?'sysinfo-warn':''});
+    rows.push({k:'Memory', v:`${(d.mem_used_percent||0).toFixed(1)}% (${fmtBytes(d.mem_used||0)} / ${fmtBytes(d.mem_total||0)})`, cls:d.mem_used_percent>=90?'sysinfo-warn':''});
+    rows.push({k:'Disk '+(d.disk_path||''), v:`${(d.disk_used_percent||0).toFixed(1)}% (${fmtBytes(d.disk_free||0)} free of ${fmtBytes(d.disk_total||0)})`, cls:d.disk_used_percent>=90?'sysinfo-warn':''});
+    rows.push({k:'Load avg', v:`${(d.load1||0).toFixed(2)} · ${(d.load5||0).toFixed(2)} · ${(d.load15||0).toFixed(2)}`});
+    if (d.host_uptime_s) rows.push({k:'Host uptime', v:fmtDuration(d.host_uptime_s)});
+  }
+  (d.certs||[]).forEach(c => {
+    if (c.error) rows.push({k:'TLS '+c.target, v:'error: '+c.error, cls:'sysinfo-warn'});
+    else rows.push({k:'TLS '+c.target, v:c.days_left+' days left', cls:c.days_left<=14?'sysinfo-warn':'sysinfo-ok'});
+  });
+  if (d.ports_watched) {
+    rows.push({k:'Listening ports', v:(d.ports&&d.ports.length)?d.ports.join(', '):'—'});
+  }
+  if (!rows.length) {
+    el.innerHTML = '<div class="sysinfo-row"><span class="sysinfo-key" style="color:var(--muted)">Host vitals unavailable (non-Linux host or /proc not accessible).</span></div>';
+    document.getElementById('host-card').style.display = '';
+    return;
+  }
+  el.innerHTML = rows.map(r =>
+    `<div class="sysinfo-row"><span class="sysinfo-key">${esc(r.k)}</span><span class="sysinfo-val ${r.cls||''}">${esc(r.v)}</span></div>`
+  ).join('');
+  document.getElementById('host-card').style.display = '';
+}
+
 // ── SSE ────────────────────────────────────────────────────────────────────
 function connectSSE() {
   const badge = document.getElementById('live-badge');
@@ -1324,14 +1448,14 @@ function prependLiveEvent(ev) {
   row.className = 'live-row';
   // Column count must match eventsTable(): with the responder enabled the
   // table has an extra actions column — omit it here and rows shift left.
-  const banBtn = (responderEnabled && ev.event_type!=='ban' && ev.event_type!=='unban')
+  const banBtn = (responderEnabled && ev.ip && ev.event_type!=='ban' && ev.event_type!=='unban')
     ? `<button class="btn btn-danger" style="padding:2px 7px;font-size:10px;" onclick="banIP('${esc(ev.ip)}','')">Ban</button>` : '';
   row.innerHTML = `
     <td class="ts">${fmtTS(ev.ts)}</td>
     <td><span class="badge ${badgeClass(ev.event_type)}">${esc(ev.event_type)}</span></td>
-    <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(ev.ip)}')" title="Show all events from this IP">${esc(ev.ip)}</span></td>
+    <td class="ip">${ev.ip?ipCell(ev.ip,ev.threat):''}</td>
     <td class="geo">${esc(ev.country||'')}</td>
-    <td class="user">${esc(ev.username||'')}</td>
+    <td class="user">${userCell(ev.username,ev.detail)}</td>
     <td style="color:var(--muted)">${ev.port||''}</td>
     <td class="geo">${esc(ev.source)}</td>
     <td class="geo asn-cell" title="${esc(ev.asn||'')}">${esc(ev.asn||'')}</td>
@@ -1370,6 +1494,75 @@ async function banIPManual() {
   if (ok) { document.getElementById('ban-ip-input').value=''; document.getElementById('ban-reason-input').value=''; }
 }
 
+// ── IP profile modal ─────────────────────────────────────────────────────────
+async function openIPProfile(ip) {
+  if (!ip) return;
+  const modal = document.getElementById('ip-modal');
+  document.getElementById('ip-modal-title').textContent = ip;
+  document.getElementById('ip-modal-body').innerHTML = '<div class="empty-state">Loading…</div>';
+  modal.style.display = 'flex';
+  try {
+    const d = await fetch('/api/ip?ip='+encodeURIComponent(ip)).then(r=>r.json());
+    if (d.error) throw new Error(d.error);
+    renderIPProfile(ip, d);
+  } catch(e) {
+    document.getElementById('ip-modal-body').innerHTML = `<div class="error-msg">${esc(String(e.message||e))}</div>`;
+  }
+}
+
+function closeIPProfile() { document.getElementById('ip-modal').style.display = 'none'; }
+
+function renderIPProfile(ip, d) {
+  const info = d.info || {};
+  const rows = [];
+  rows.push(['Total events', fmt(info.total||0)]);
+  rows.push(['First seen', info.first_seen ? fmtTS(info.first_seen) : '—']);
+  rows.push(['Last seen',  info.last_seen  ? fmtTS(info.last_seen)  : '—']);
+  const loc = [info.city, info.country].filter(Boolean).join(', ');
+  rows.push(['Location', esc(loc || '—')]);
+  if (info.asn)    rows.push(['ASN', esc(info.asn)]);
+  if (info.threat) rows.push(['Blocklist', `<span style="color:var(--danger)">&#9888; ${esc(info.threat)}</span>`]);
+  if (d.allowlisted) rows.push(['Allowlist', '<span class="sysinfo-ok">protected — never banned</span>']);
+  if (d.ban) {
+    const exp = d.ban.expires_at ? 'expires '+fmtTS(d.ban.expires_at) : 'permanent';
+    rows.push(['Ban status', `<span class="ban-active">ACTIVE · ${exp}</span>`]);
+  }
+
+  let actions = `<button class="btn btn-muted" onclick="filterByIP('${esc(ip)}');closeIPProfile();">View all events &#8594;</button>`;
+  if (d.responder_enabled && !d.allowlisted) {
+    if (d.ban && d.ban.active) actions += `<button class="btn btn-muted" onclick="modalUnban('${esc(ip)}')">Unban</button>`;
+    else                       actions += `<button class="btn btn-danger" onclick="modalBan('${esc(ip)}')">Ban</button>`;
+  }
+
+  const types = Object.entries(info.type_counts||{}).sort((a,b)=>b[1]-a[1])
+    .map(([t,c])=>`<span class="ipp-type"><span class="badge ${badgeClass(t)}">${esc(t)}</span>${fmt(c)}</span>`).join('')
+    || '<span style="color:var(--muted)">none</span>';
+
+  const events = (d.events||[]).slice(0,25).map(e=>`<tr>
+    <td class="ts">${fmtTS(e.ts)}</td>
+    <td><span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span></td>
+    <td class="user">${userCell(e.username,e.detail)}</td>
+    <td style="color:var(--muted);font-size:11px;">${esc(e.source||'')}</td>
+  </tr>`).join('');
+
+  document.getElementById('ip-modal-body').innerHTML = `
+    <div class="ipp-actions">${actions}</div>
+    <div class="ipp-grid">${rows.map(([k,v])=>`<div class="ipp-row"><span class="ipp-key">${esc(k)}</span><span class="ipp-val">${v}</span></div>`).join('')}</div>
+    <div class="ipp-section-hd">Event breakdown</div>
+    <div class="ipp-types">${types}</div>
+    <div class="ipp-section-hd">Recent events</div>
+    ${events ? `<table>${events}</table>` : '<div class="empty-state">No events.</div>'}`;
+}
+
+async function modalBan(ip) {
+  if (await banIP(ip, 'manual (profile)', 0)) openIPProfile(ip);
+}
+async function modalUnban(ip) {
+  await unbanIP(ip);
+  openIPProfile(ip);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeIPProfile(); });
+
 // ── Bans table ─────────────────────────────────────────────────────────────
 async function loadBansBadge() {
   try {
@@ -1405,7 +1598,7 @@ async function loadBans() {
           : '<span title="Will be lifted by the next sweep">expiring…</span>';
       }
       return `<tr>
-        <td class="ip"><span class="ip-link" onclick="filterByIP('${esc(b.ip)}')" title="Show all events from this IP">${esc(b.ip)}</span></td>
+        <td class="ip"><span class="ip-link" onclick="openIPProfile('${esc(b.ip)}')" title="Show IP profile">${esc(b.ip)}</span></td>
         <td style="color:var(--muted);font-size:11px;">${esc(b.jail||'—')}</td>
         <td class="ts">${fmtTS(b.banned_at)}</td>
         <td style="color:var(--muted);font-size:11px;">${dur}</td>
@@ -1546,6 +1739,7 @@ async function loadSystemInfo() {
       d.backend==='journald' ? {k:'Journald unit', v:d.journald_unit} : null,
       {k:'GeoIP',      v:d.geoip_enabled?'Enabled':'Disabled',    cls:d.geoip_enabled?'sysinfo-ok':'sysinfo-off'},
       {k:'ASN',        v:d.asn_enabled?'Enabled':'Disabled',      cls:d.asn_enabled?'sysinfo-ok':'sysinfo-off'},
+      d.blocklist_enabled ? {k:'Threat blocklist', v:`${fmt(d.blocklist_count)} entries${d.blocklist_autoban?' · auto-ban':''}`, cls:'sysinfo-ok'} : null,
       {k:'Responder',  v:d.responder_enabled?d.responder_backend:'Disabled', cls:d.responder_enabled?'sysinfo-ok':'sysinfo-off'},
       {k:'Auth',       v:d.auth_enabled?'Enabled':'Disabled',      cls:d.auth_enabled?'sysinfo-warn':'sysinfo-off'},
       {k:'Listen',     v:d.listen},
@@ -1558,6 +1752,7 @@ async function loadSystemInfo() {
     ).join('');
     document.getElementById('backup-db-size').textContent = d.db_size_bytes ? fmtBytes(d.db_size_bytes) : '';
   } catch(e) { console.error('system info',e); }
+  loadVitals(); // refresh the Host Vitals card when the General tab opens
 }
 
 function fmtBytes(n) {
@@ -1623,12 +1818,13 @@ async function loadNotifySettings() {
     setBadge('gotify-status-badge',  !!(d.gotify_url&&d.gotify_token));
     setBadge('email-status-badge',   !!(d.smtp_host&&d.smtp_from&&d.smtp_to));
     const rulesLocked = locked.includes('rules');
-    ['rule-ban','rule-accepted','rule-country','rule-threshold','threshold-n','threshold-dur','rule-digest-daily','rule-digest-weekly']
+    ['rule-ban','rule-accepted','rule-country','rule-sudo','rule-threshold','threshold-n','threshold-dur','rule-digest-daily','rule-digest-weekly']
       .forEach(id => lockField(id, rulesLocked));
     const rules = (d.rules||'').split(',').map(r=>r.trim()).filter(Boolean);
     document.getElementById('rule-ban').checked           = rules.includes('ban');
     document.getElementById('rule-accepted').checked      = rules.includes('accepted_login');
     document.getElementById('rule-country').checked       = rules.includes('new_country');
+    document.getElementById('rule-sudo').checked          = rules.includes('sudo');
     document.getElementById('rule-digest-daily').checked  = rules.includes('digest:daily');
     document.getElementById('rule-digest-weekly').checked = rules.includes('digest:weekly');
     const thr = rules.find(r=>r.startsWith('threshold:'));
@@ -1666,6 +1862,7 @@ async function saveSettings() {
   if (document.getElementById('rule-ban').checked)       rules.push('ban');
   if (document.getElementById('rule-accepted').checked)  rules.push('accepted_login');
   if (document.getElementById('rule-country').checked)   rules.push('new_country');
+  if (document.getElementById('rule-sudo').checked)      rules.push('sudo');
   if (document.getElementById('rule-threshold').checked) {
     rules.push(`threshold:${document.getElementById('threshold-n').value||'100'}/${document.getElementById('threshold-dur').value||'1h'}`);
   }
@@ -1905,9 +2102,11 @@ applyTheme(savedTheme);
 switchSection('dashboard');
 loadHealth();
 loadAll();
+loadVitals();
 connectSSE();
 setInterval(loadAll, 30000);
 setInterval(loadHealth, 60000);
+setInterval(loadVitals, 10000);
 window.addEventListener('resize', ()=>{ if (currentSection==='dashboard') loadStats(); });
 </script>
 </body>

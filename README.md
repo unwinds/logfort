@@ -34,6 +34,11 @@ LogFort watches your auth logs and shows you a live browser dashboard: who is at
 - ✅ **Allowlist** — protect your home/office IPs from ever being banned, editable live from the UI
 - 📈 **Prometheus metrics** — `/metrics` endpoint with parse counters, active-ban / SSE-client / DB-size gauges, plus a ready-made [Grafana dashboard](docs/grafana-dashboard.json)
 - 🎬 **Demo mode** — `LOGFORT_DEMO=true` fills the dashboard with realistic synthetic traffic, no server required
+- 🕵️ **Privilege audit** — sudo failures and `useradd`/`userdel` are tracked separately from attack stats, with an optional `sudo` notification rule
+- 🧱 **Local threat blocklist** — flag or immediately ban IPs from a local IP/CIDR list file, no outbound calls
+- 🩺 **Host vitals** — CPU, memory, disk and load average from `/proc`, shown in the topbar and Settings, exposed on `/metrics`
+- 🔏 **TLS cert & port watch** — optional alerts when a configured certificate is about to expire or a new TCP port starts listening
+- 🔎 **IP profile** — click any IP for a drill-down: first/last seen, event breakdown, ban/allowlist status, recent activity
 
 ---
 
@@ -146,6 +151,15 @@ All settings are environment variables. Notification settings can also be change
 | `LOGFORT_HOME_LAT` / `_LON` | _(empty)_ | Optional home-marker coordinates on the attack map |
 | `LOGFORT_DEMO` | `false` | Demo mode: synthetic traffic instead of real logs (never use in production) |
 
+### Threat Intel & Host Monitoring
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOGFORT_BLOCKLIST` | _(empty)_ | Local IP/CIDR blocklist file (one entry per line, `#` comments); a match flags the event and shows in Settings → General |
+| `LOGFORT_BLOCKLIST_AUTOBAN` | `false` | Ban an IP immediately on a blocklist match (requires the responder to be enabled) |
+| `LOGFORT_TLS_WATCH` | _(empty)_ | Comma-separated `host[:port]` (default `:443`) to monitor for certificate expiry; alerts when ≤14 days remain |
+| `LOGFORT_PORTS_WATCH` | `false` | Watch locally-listening TCP ports; alert when a new one appears (Linux only) |
+
 ### Authentication
 
 | Variable | Default | Description |
@@ -181,7 +195,7 @@ With the fail2ban socket mounted (`- /var/run/fail2ban:/var/run/fail2ban` + `use
 | `LOGFORT_NOTIFY_SMTP_HOST` | _(empty)_ | SMTP server `host:port` (465 = implicit TLS, otherwise STARTTLS) |
 | `LOGFORT_NOTIFY_SMTP_USER` / `_PASS` | _(empty)_ | SMTP credentials (optional for open relays) |
 | `LOGFORT_NOTIFY_SMTP_FROM` / `_TO` | _(empty)_ | Sender and comma-separated recipients (both required) |
-| `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`, `digest:daily`, `digest:weekly` |
+| `LOGFORT_NOTIFY_RULES` | _(empty)_ | Comma-separated: `accepted_login`, `ban`, `new_country`, `sudo`, `threshold:N/dur`, `digest:daily`, `digest:weekly` |
 
 Every channel can also be configured at runtime in **Settings → Notifications** — no env vars or restart needed. Env vars always override values saved via the UI (the UI shows such fields as locked).
 
@@ -200,6 +214,8 @@ Every channel can also be configured at runtime in **Settings → Notifications*
 | `GET /api/map?window=24h` | Geo-aggregated attack points |
 | `GET /api/stream` | Live events via Server-Sent Events |
 | `GET /api/backup` | Consistent point-in-time SQLite snapshot (download) |
+| `GET /api/vitals` | Host vitals (CPU/mem/disk/load), TLS cert-expiry results, listening ports |
+| `GET /api/ip?ip=<ip>` | IP profile: aggregate counts, geo/ASN/threat, ban/allowlist status, recent events |
 | `GET /metrics` | Prometheus text format (respects basic auth); [Grafana dashboard](docs/grafana-dashboard.json) included |
 | `POST /api/ban` / `POST /api/unban` | Manual banning (requires responder); `duration_secs` sets an optional ban TTL (0 = permanent) |
 
@@ -215,6 +231,7 @@ Every channel can also be configured at runtime in **Settings → Notifications*
 | Postfix (`mail.log`) | `proc=postfix/smtpd`, SASL authentication failures |
 | Dovecot (`mail.log`) | `proc=dovecot`, imap/pop3-login auth failures |
 | fail2ban | `YYYY-MM-DD HH:MM:SS,ms fail2ban` prefix |
+| sudo / useradd / userdel (privilege audit) | `proc=sudo`, `proc=useradd`, `proc=userdel` |
 | systemd journal | `LOGFORT_BACKEND=journald` |
 
 All sources are detected per line — point `LOGFORT_LOG_PATHS` at any mix of files (e.g. `/host/log/auth.log,/host/log/mail.log`).

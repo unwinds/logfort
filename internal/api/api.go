@@ -21,41 +21,51 @@ import (
 
 	"github.com/unwinds/logfort/internal/config"
 	"github.com/unwinds/logfort/internal/f2b"
+	"github.com/unwinds/logfort/internal/hostinfo"
 	"github.com/unwinds/logfort/internal/ingest"
+	"github.com/unwinds/logfort/internal/netwatch"
 	"github.com/unwinds/logfort/internal/notify"
 	"github.com/unwinds/logfort/internal/parse"
 	"github.com/unwinds/logfort/internal/responder"
 	"github.com/unwinds/logfort/internal/store"
+	"github.com/unwinds/logfort/internal/threat"
 	webui "github.com/unwinds/logfort/web"
 )
 
 // Server holds API dependencies and implements http.Handler.
 type Server struct {
-	cfg             *config.Config
-	envCfg          config.Config // notify fields as loaded from env vars (pre-DB-overlay); gates UI writes
-	cfgMu           sync.RWMutex  // protects runtime-mutable notify/autoban/retention fields of cfg
-	store           store.Store
-	mux             *http.ServeMux
-	handler         http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
-	hub             *Hub
-	version         string
-	startTS         time.Time
-	parsedFn        func() (int64, int64)
-	responder       responder.Responder
-	allowlist       *responder.Allowlist
-	banLim          *rateLimiter // limits ban requests only; unban is not throttled
-	notifyMu        sync.RWMutex
-	notifyFn        func(*parse.Event)
-	notifyDisp      *notify.Dispatcher // tracked for Stop() on replacement
-	geoIPEnabled    bool
-	asnEnabled      bool
-	f2bMgr          *f2b.Manager                 // nil when fail2ban integration is unavailable
-	sourcesFn       func() []ingest.SourceStatus // pipeline source health for /api/health
-	autoBanCooldown sync.Map                     // IP string → time.Time; prevents duplicate bans within window
-	autoBanSem      chan struct{}                // limits concurrent auto-ban background goroutines
-	statsCache      sync.Map                     // "stats:<window>" / "map:<window>" → statsCacheEntry
-	shutCtx         context.Context
-	shutCancel      context.CancelFunc
+	cfg               *config.Config
+	envCfg            config.Config // notify fields as loaded from env vars (pre-DB-overlay); gates UI writes
+	cfgMu             sync.RWMutex  // protects runtime-mutable notify/autoban/retention fields of cfg
+	store             store.Store
+	mux               *http.ServeMux
+	handler           http.Handler // pre-built: mux wrapped with basicAuth when auth is enabled
+	hub               *Hub
+	version           string
+	startTS           time.Time
+	parsedFn          func() (int64, int64)
+	responder         responder.Responder
+	allowlist         *responder.Allowlist
+	banLim            *rateLimiter // limits ban requests only; unban is not throttled
+	notifyMu          sync.RWMutex
+	notifyFn          func(*parse.Event)
+	notifyDisp        *notify.Dispatcher // tracked for Stop() on replacement
+	geoIPEnabled      bool
+	asnEnabled        bool
+	f2bMgr            *f2b.Manager                 // nil when fail2ban integration is unavailable
+	sourcesFn         func() []ingest.SourceStatus // pipeline source health for /api/health
+	autoBanCooldown   sync.Map                     // IP string → time.Time; prevents duplicate bans within window
+	threatBanCooldown sync.Map                     // IP string → time.Time; blocklist auto-ban dedup (separate from autoBanCooldown)
+	autoBanSem        chan struct{}                // limits concurrent auto-ban background goroutines
+	statsCache        sync.Map                     // "stats:<window>" / "map:<window>" → statsCacheEntry
+	vitalsFn          func() hostinfo.Snapshot     // host-vitals sampler (nil when unavailable)
+	blocklist         *threat.List                 // loaded threat blocklist (nil when disabled)
+	blocklistAuto     bool                         // ban IPs on blocklist match
+	watchMu           sync.RWMutex                 // protects certStatus/listeningPorts
+	certStatus        []netwatch.CertStatus        // TLS cert-expiry results, set by main's watcher
+	listeningPorts    []int                        // listening TCP ports, set by main's watcher
+	shutCtx           context.Context
+	shutCancel        context.CancelFunc
 }
 
 // New creates and configures the HTTP server.
@@ -170,6 +180,8 @@ func (s *Server) PublishEvent(ev *parse.Event) {
 		"lat":         lat,
 		"lon":         lon,
 		"asn":         ev.Geo.ASN,
+		"detail":      ev.Detail,
+		"threat":      ev.Threat,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -198,6 +210,51 @@ func (s *Server) Close() {
 // SetCounterFunc wires the pipeline's parsed/unparsed counters into /api/health.
 func (s *Server) SetCounterFunc(fn func() (int64, int64)) {
 	s.parsedFn = fn
+}
+
+// SetVitalsFunc wires the host-vitals sampler into /api/vitals and /metrics.
+func (s *Server) SetVitalsFunc(fn func() hostinfo.Snapshot) { s.vitalsFn = fn }
+
+// SetBlocklist records the loaded threat blocklist (for /api/system) and whether
+// a blocklist match should trigger an immediate ban.
+func (s *Server) SetBlocklist(l *threat.List, autoBan bool) {
+	s.blocklist = l
+	s.blocklistAuto = autoBan
+}
+
+// SetCertStatus stores the latest TLS certificate-expiry results (set by the
+// background watcher in main).
+func (s *Server) SetCertStatus(cs []netwatch.CertStatus) {
+	s.watchMu.Lock()
+	s.certStatus = cs
+	s.watchMu.Unlock()
+}
+
+// SetListeningPorts stores the latest listening-port snapshot (set by the
+// background watcher in main).
+func (s *Server) SetListeningPorts(ports []int) {
+	s.watchMu.Lock()
+	s.listeningPorts = ports
+	s.watchMu.Unlock()
+}
+
+// SendAlert pushes an operational alert (disk full, cert expiring, new listening
+// port) through the current dispatcher in the background. Nil-safe: a no-op when
+// no notifiers are configured.
+func (s *Server) SendAlert(title, body string) {
+	s.notifyMu.RLock()
+	disp := s.notifyDisp
+	s.notifyMu.RUnlock()
+	if disp == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(s.shutCtx, 15*time.Second)
+		defer cancel()
+		if err := disp.SendAlert(ctx, title, body); err != nil {
+			slog.Warn("system alert delivery failed", "title", title, "err", err)
+		}
+	}()
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +323,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/map", s.handleMap)
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
 	s.mux.HandleFunc("GET /api/backup", s.handleBackup)
+	s.mux.HandleFunc("GET /api/vitals", s.handleVitals)
+	s.mux.HandleFunc("GET /api/ip", s.handleIPInfo)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	// Write endpoints (require responder enabled).
@@ -462,7 +521,7 @@ func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="logfort-events.csv"`)
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"ts", "ip", "event_type", "username", "user_valid", "auth_method", "port", "source", "country", "city", "lat", "lon", "asn"})
+	_ = cw.Write([]string{"ts", "ip", "event_type", "username", "user_valid", "auth_method", "port", "source", "country", "city", "lat", "lon", "asn", "detail", "threat"})
 	for _, e := range events {
 		userValid := ""
 		if e.UserValid != nil {
@@ -483,6 +542,7 @@ func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
 			time.Unix(e.TS, 0).UTC().Format(time.RFC3339),
 			e.IP, e.EventType, csvCell(e.Username), userValid, e.AuthMethod,
 			port, e.Source, csvCell(e.Country), csvCell(e.City), lat, lon, csvCell(e.ASN),
+			csvCell(e.Detail), csvCell(e.Threat),
 		})
 	}
 	cw.Flush()
@@ -510,6 +570,15 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP logfort_sse_clients Currently connected event-stream clients.\n# TYPE logfort_sse_clients gauge\nlogfort_sse_clients %d\n", s.hub.clientCount())
 	if size := dbSizeBytes(s.cfg.DBPath); size > 0 {
 		fmt.Fprintf(w, "# HELP logfort_db_size_bytes SQLite database file size.\n# TYPE logfort_db_size_bytes gauge\nlogfort_db_size_bytes %d\n", size)
+	}
+	if s.vitalsFn != nil {
+		if v := s.vitalsFn(); v.Available {
+			fmt.Fprintf(w, "# HELP logfort_cpu_percent Host CPU utilisation percent.\n# TYPE logfort_cpu_percent gauge\nlogfort_cpu_percent %g\n", v.CPUPercent)
+			fmt.Fprintf(w, "# HELP logfort_mem_used_percent Host memory used percent.\n# TYPE logfort_mem_used_percent gauge\nlogfort_mem_used_percent %g\n", v.MemUsedPercent)
+			fmt.Fprintf(w, "# HELP logfort_load1 Host 1-minute load average.\n# TYPE logfort_load1 gauge\nlogfort_load1 %g\n", v.Load1)
+			fmt.Fprintf(w, "# HELP logfort_disk_used_percent Data-volume disk used percent.\n# TYPE logfort_disk_used_percent gauge\nlogfort_disk_used_percent %g\n", v.DiskUsedPercent)
+			fmt.Fprintf(w, "# HELP logfort_disk_free_bytes Data-volume disk free bytes.\n# TYPE logfort_disk_free_bytes gauge\nlogfort_disk_free_bytes %d\n", v.DiskFree)
+		}
 	}
 }
 
@@ -811,6 +880,78 @@ func (s *Server) handleUnbanPost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unbanned", "ip": req.IP})
 }
 
+// vitalsResp embeds the host-vitals snapshot and adds the network probes.
+type vitalsResp struct {
+	hostinfo.Snapshot
+	Certs        []netwatch.CertStatus `json:"certs"`
+	Ports        []int                 `json:"ports"`
+	PortsWatched bool                  `json:"ports_watched"`
+}
+
+// handleVitals returns host vitals (CPU/mem/disk/load), TLS certificate expiry,
+// and listening ports. Read-only; empty/zero when a feature is not enabled.
+func (s *Server) handleVitals(w http.ResponseWriter, _ *http.Request) {
+	var snap hostinfo.Snapshot
+	if s.vitalsFn != nil {
+		snap = s.vitalsFn()
+	}
+	s.watchMu.RLock()
+	certs := s.certStatus
+	ports := s.listeningPorts
+	s.watchMu.RUnlock()
+	if certs == nil {
+		certs = []netwatch.CertStatus{}
+	}
+	if ports == nil {
+		ports = []int{}
+	}
+	writeJSON(w, http.StatusOK, vitalsResp{
+		Snapshot: snap, Certs: certs, Ports: ports, PortsWatched: s.cfg.PortsWatch,
+	})
+}
+
+// handleIPInfo returns the drill-down profile for a single IP: aggregate
+// counts, geo/asn/threat, ban status, allowlist status, and recent events.
+func (s *Server) handleIPInfo(w http.ResponseWriter, r *http.Request) {
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if !responder.IsValid(ip) {
+		writeError(w, http.StatusBadRequest, "invalid or missing ip parameter")
+		return
+	}
+	ip = normalizeIP(ip)
+
+	info, err := s.store.GetIPInfo(r.Context(), ip)
+	if err != nil {
+		slog.Error("ip info", "ip", ip, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	events, _, err := s.store.ListEvents(r.Context(), store.EventQuery{IP: ip, Limit: 50})
+	if err != nil {
+		slog.Error("ip info events", "ip", ip, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	var activeBan *store.BanRow
+	if bans, err := s.store.ListBans(r.Context(), true); err == nil {
+		for i := range bans {
+			if normalizeIP(bans[i].IP) == ip {
+				activeBan = &bans[i]
+				break
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"info":              info,
+		"events":            events,
+		"ban":               activeBan,
+		"allowlisted":       s.allowlist != nil && s.allowlist.Contains(ip),
+		"responder_enabled": s.cfg.ResponderEnabled,
+	})
+}
+
 // --- settings handlers ---
 
 // notifySettingJSONKeys maps the JSON field names used by GET/POST
@@ -850,6 +991,11 @@ func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
 		"listen":            s.cfg.Listen,
 		"db_path":           s.cfg.DBPath,
 		"db_size_bytes":     dbSizeBytes(s.cfg.DBPath),
+		"blocklist_enabled": s.blocklist != nil && s.blocklist.Count() > 0,
+		"blocklist_count":   s.blocklist.Count(),
+		"blocklist_autoban": s.blocklistAuto,
+		"tls_watch_count":   len(s.cfg.TLSWatch),
+		"ports_watch":       s.cfg.PortsWatch,
 	})
 }
 
@@ -1290,6 +1436,86 @@ func (s *Server) autoBanBackground(ip string, threshold int, dur time.Duration, 
 	}
 	if err := s.store.InsertEvent(ctx, banEv); err != nil && !errors.Is(err, store.ErrDuplicate) {
 		slog.Warn("record auto-ban event", "ip", ip, "err", err)
+	}
+	s.PublishEvent(banEv)
+	s.NotifyEvent(banEv)
+}
+
+// ThreatBanEvent bans an IP that matched the threat blocklist, when blocklist
+// auto-ban is enabled and the responder is active. It is independent of the
+// attempt-threshold auto-ban: a known-bad IP is banned on first sighting
+// regardless of event type. It uses its OWN cooldown map (threatBanCooldown),
+// not autoBanCooldown: the attempt auto-ban claims and then releases that map
+// for sub-threshold IPs, which would otherwise suppress the threat ban entirely
+// whenever both features are enabled. The autoBanSem is still shared so the
+// total number of concurrent background ban goroutines stays bounded.
+func (s *Server) ThreatBanEvent(ev *parse.Event) {
+	if ev.Threat == "" || !s.blocklistAuto {
+		return
+	}
+	s.cfgMu.RLock()
+	responderEnabled := s.cfg.ResponderEnabled
+	banTime := s.cfg.AutoBanBanTime
+	s.cfgMu.RUnlock()
+	if !responderEnabled {
+		return
+	}
+	ip := normalizeIP(ev.IP)
+	if ip == "" || responder.IsPrivate(ip) {
+		return
+	}
+	if s.allowlist != nil && s.allowlist.Contains(ip) {
+		return
+	}
+
+	now := time.Now()
+	// Claim the IP in the dedicated threat cooldown. Re-arm once the ban's TTL
+	// has elapsed so an IP that returns after a temporary ban expired is banned
+	// again; a permanent ban (banTime <= 0) never re-arms — it stays claimed.
+	if prev, loaded := s.threatBanCooldown.LoadOrStore(ip, now); loaded {
+		if banTime <= 0 || now.Sub(prev.(time.Time)) < time.Duration(banTime)*time.Second {
+			return
+		}
+		s.threatBanCooldown.Store(ip, now)
+	}
+	select {
+	case s.autoBanSem <- struct{}{}:
+	default:
+		s.threatBanCooldown.Delete(ip)
+		return
+	}
+	reason := "blocklist:" + ev.Threat
+	go func() {
+		defer func() { <-s.autoBanSem }()
+		s.threatBanBackground(ip, reason, banTime)
+	}()
+}
+
+func (s *Server) threatBanBackground(ip, reason string, banTime int64) {
+	ctx, cancel := context.WithTimeout(s.shutCtx, 30*time.Second)
+	defer cancel()
+
+	var expiresAt int64
+	if banTime > 0 {
+		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second).Unix()
+	}
+	if err := s.store.BanIP(ctx, ip, s.responder.Name(), reason, expiresAt); err != nil {
+		slog.Error("threat-ban store", "ip", ip, "err", err)
+		s.threatBanCooldown.Delete(ip) // allow retry after transient DB error
+		return
+	}
+	if err := s.responder.Ban(ctx, ip); err != nil {
+		if rbErr := s.store.UnbanIP(ctx, ip); rbErr != nil {
+			slog.Error("threat-ban rollback", "ip", ip, "err", rbErr)
+		}
+		slog.Error("threat-ban responder", "ip", ip, "err", err)
+		s.threatBanCooldown.Delete(ip) // allow retry after transient firewall error
+		return
+	}
+	slog.Info("threat-ban", "ip", ip, "reason", reason, "backend", s.responder.Name())
+	banEv := &parse.Event{TS: time.Now().UTC(), IP: ip, EventType: "ban", Source: "blocklist"}
+	if err := s.store.InsertEvent(ctx, banEv); err != nil && !errors.Is(err, store.ErrDuplicate) {
+		slog.Warn("record threat-ban event", "ip", ip, "err", err)
 	}
 	s.PublishEvent(banEv)
 	s.NotifyEvent(banEv)

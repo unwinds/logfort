@@ -69,6 +69,32 @@ var dovecotPattern = regexp.MustCompile(`^(?:imap|pop3|submission|managesieve)-l
 //	warning: host.example.com[203.0.113.5]: SASL PLAIN authentication failed: ..., sasl_username=admin@example.com
 var postfixPattern = regexp.MustCompile(`^warning: \S*\[(?P<ip>[0-9a-fA-F:.]+)\]: SASL \S+ authentication failed(?::.*?)?(?:, sasl_username=(?P<user>\S+))?$`)
 
+// --- sudo / user-management (local privilege audit) ---
+//
+// These events describe local root escalation and account changes, not remote
+// attacks. They carry no source IP, so they never count toward auto-ban or the
+// attack statistics — they exist for the audit feed and privilege alerts.
+
+// sudoSuccessPattern matches a successful sudo command:
+//
+//	alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update
+var sudoSuccessPattern = regexp.MustCompile(`^(?P<user>\S+) : TTY=\S+ ; PWD=\S+ ; USER=(?P<target>\S+) ; COMMAND=(?P<cmd>.+)$`)
+
+// sudoFailPattern matches a failed sudo attempt (wrong password, not in
+// sudoers, command not allowed). Tried only after sudoSuccessPattern, so a
+// success line (which has no reason segment before TTY=) never reaches it:
+//
+//	bob : 1 incorrect password attempt ; TTY=pts/0 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/su
+//	bob : user NOT in sudoers ; TTY=pts/0 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/bash
+var sudoFailPattern = regexp.MustCompile(`^(?P<user>\S+) : (?P<reason>.+?) ; TTY=\S+ ; PWD=\S+ ; USER=\S+ ; COMMAND=(?P<cmd>.+)$`)
+
+// userAddPattern matches a new account (useradd). A UID of 0 is a red flag —
+// a second root-equivalent user.
+var userAddPattern = regexp.MustCompile(`new user: name=(?P<name>[^,]+), UID=(?P<uid>\d+), GID=\d+, home=[^,]+, shell=(?P<shell>[^,\s]+)`)
+
+// userDelPattern matches account deletion (userdel).
+var userDelPattern = regexp.MustCompile(`^delete user '(?P<name>[^']+)'`)
+
 // fail2banPattern matches fail2ban log lines.
 var fail2banPattern = regexp.MustCompile(`\[(?P<jail>[^\]]+)\]\s+(?P<action>Ban|Unban)\s+(?P<ip>[0-9a-fA-F:.]+)`)
 
@@ -203,6 +229,66 @@ func parseSyslogLine(line string) (*Event, error) {
 	case strings.HasPrefix(proc, "postfix") && strings.HasSuffix(proc, "smtpd"):
 		// "postfix/smtpd" and multi-instance "postfix/submission/smtpd".
 		return parseMailMessage(ts, msg, line, postfixPattern, "postfix")
+	case proc == "sudo":
+		return parseSudoMessage(ts, msg, line)
+	case proc == "useradd" || proc == "userdel":
+		return parseUserMessage(ts, msg, line, proc)
+	}
+	return nil, ErrNoMatch
+}
+
+// parseSudoMessage recognises successful and failed sudo invocations.
+func parseSudoMessage(ts time.Time, msg, line string) (*Event, error) {
+	if m := namedGroups(sudoSuccessPattern, msg); m != nil {
+		return &Event{
+			TS:        ts,
+			EventType: "sudo_session",
+			Username:  m["user"],
+			Source:    "sudo",
+			Detail:    "as " + m["target"] + ": " + m["cmd"],
+			Raw:       line,
+		}, nil
+	}
+	if m := namedGroups(sudoFailPattern, msg); m != nil {
+		detail := m["reason"]
+		if cmd := m["cmd"]; cmd != "" {
+			detail += ": " + cmd
+		}
+		return &Event{
+			TS:        ts,
+			EventType: "sudo_fail",
+			Username:  m["user"],
+			Source:    "sudo",
+			Detail:    detail,
+			Raw:       line,
+		}, nil
+	}
+	return nil, ErrNoMatch
+}
+
+// parseUserMessage recognises account creation and deletion.
+func parseUserMessage(ts time.Time, msg, line, proc string) (*Event, error) {
+	if proc == "useradd" {
+		if m := namedGroups(userAddPattern, msg); m != nil {
+			return &Event{
+				TS:        ts,
+				EventType: "user_add",
+				Username:  m["name"],
+				Source:    "useradd",
+				Detail:    "uid=" + m["uid"] + " shell=" + m["shell"],
+				Raw:       line,
+			}, nil
+		}
+		return nil, ErrNoMatch
+	}
+	if m := namedGroups(userDelPattern, msg); m != nil {
+		return &Event{
+			TS:        ts,
+			EventType: "user_del",
+			Username:  m["name"],
+			Source:    "userdel",
+			Raw:       line,
+		}, nil
 	}
 	return nil, ErrNoMatch
 }

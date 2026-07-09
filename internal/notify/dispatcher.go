@@ -133,6 +133,29 @@ func (d *Dispatcher) SendTest(ctx context.Context) error {
 	return firstErr
 }
 
+// SendAlert delivers an operational alert (disk full, certificate expiring, a
+// new listening port) to every configured notifier, bypassing rules. These are
+// infrequent, high-signal warnings, so they are pushed unconditionally whenever
+// any channel is configured. Safe to call on a nil Dispatcher (no-op).
+func (d *Dispatcher) SendAlert(ctx context.Context, title, body string) error {
+	if d == nil {
+		return nil
+	}
+	msg := Message{
+		Title:     title,
+		Body:      body,
+		EventType: "system_alert",
+		TS:        time.Now().Unix(),
+	}
+	var firstErr error
+	for _, n := range d.notifiers {
+		if err := n.Send(ctx, msg); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", n.Name(), err)
+		}
+	}
+	return firstErr
+}
+
 // dispatch is the synchronous core used by Notify and by tests.
 func (d *Dispatcher) dispatch(ctx context.Context, ev *parse.Event) {
 	// Suppress notifications for events that pre-date startup — prevents flooding

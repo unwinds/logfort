@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"syscall"
 	"time"
@@ -16,11 +18,14 @@ import (
 	"github.com/unwinds/logfort/internal/config"
 	"github.com/unwinds/logfort/internal/f2b"
 	"github.com/unwinds/logfort/internal/geo"
+	"github.com/unwinds/logfort/internal/hostinfo"
 	"github.com/unwinds/logfort/internal/ingest"
+	"github.com/unwinds/logfort/internal/netwatch"
 	"github.com/unwinds/logfort/internal/notify"
 	"github.com/unwinds/logfort/internal/parse"
 	"github.com/unwinds/logfort/internal/responder"
 	"github.com/unwinds/logfort/internal/store"
+	"github.com/unwinds/logfort/internal/threat"
 )
 
 // version is set at build time via -X main.version=<tag>.
@@ -118,6 +123,22 @@ func main() {
 		}
 	}
 
+	// Optional threat-intel blocklist (local file of IPs/CIDRs). A match flags
+	// the event (red badge, `threat` column) and, when LOGFORT_BLOCKLIST_AUTOBAN
+	// is set, triggers an immediate ban. All lookups stay local.
+	var blocklist *threat.List
+	if cfg.Blocklist != "" {
+		bl, err := threat.Open(cfg.Blocklist)
+		if err != nil {
+			slog.Warn("blocklist unavailable, threat enrichment disabled",
+				"path", cfg.Blocklist, "err", err)
+		} else {
+			blocklist = bl
+			slog.Info("threat blocklist loaded",
+				"path", cfg.Blocklist, "entries", bl.Count(), "autoban", cfg.BlocklistAutoBan)
+		}
+	}
+
 	// Build responder (noop if LOGFORT_RESPONDER_ENABLED=false).
 	resp, allowlist, err := responder.New(cfg)
 	if err != nil {
@@ -147,11 +168,13 @@ func main() {
 
 	pipeline := ingest.NewPipeline(sources, parse.ParseLine, st)
 	pipeline.SetGeo(looker)
+	pipeline.SetBlocklist(blocklist)
 
 	srv := api.New(cfg, st, version)
 	srv.SetEnvNotifyConfig(envCfg)
 	srv.SetGeoIPEnabled(geoIPLoaded)
 	srv.SetASNEnabled(asnLoaded)
+	srv.SetBlocklist(blocklist, cfg.BlocklistAutoBan)
 	srv.SetResponder(resp, allowlist)
 	srv.SetCounterFunc(pipeline.Counters)
 	srv.SetSourceStatusFunc(pipeline.SourceStatuses)
@@ -167,9 +190,17 @@ func main() {
 	}
 	pipeline.SetPublishHook(func(ev *parse.Event) {
 		srv.PublishEvent(ev)
-		srv.NotifyEvent(ev)  // uses current dispatcher, swappable via settings API
-		srv.AutoBanEvent(ev) // auto-ban if threshold exceeded and feature is enabled
+		srv.NotifyEvent(ev)    // uses current dispatcher, swappable via settings API
+		srv.AutoBanEvent(ev)   // auto-ban if threshold exceeded and feature is enabled
+		srv.ThreatBanEvent(ev) // immediate ban if the IP is on the threat blocklist
 	})
+
+	// Host vitals sampler (CPU/mem/disk/load from local /proc; no-op off Linux).
+	vitals := hostinfo.NewSampler(filepath.Dir(cfg.DBPath))
+	if vitals.Available() {
+		srv.SetVitalsFunc(vitals.Snapshot)
+		slog.Info("host vitals sampling enabled")
+	}
 
 	httpSrv := &http.Server{
 		Addr:         cfg.Listen,
@@ -220,6 +251,30 @@ func main() {
 	// rows with an expiry may remain from when it was enabled, and they must
 	// still flip to inactive (Unban on NoopResponder is a no-op).
 	go runBanExpiry(ctx, st, resp, srv)
+
+	// Host-vitals alerting (disk almost full) — edge-triggered so it fires once
+	// per breach, not every tick.
+	if vitals.Available() {
+		go vitals.Start(ctx)
+		go runVitalsAlerts(ctx, vitals, srv)
+	}
+
+	// TLS certificate expiry monitoring for the configured endpoints.
+	if len(cfg.TLSWatch) > 0 {
+		go runCertWatch(ctx, cfg.TLSWatch, srv)
+		slog.Info("TLS certificate monitoring enabled", "targets", cfg.TLSWatch)
+	}
+
+	// Listening-port monitoring: alert when a new TCP port starts listening
+	// (possible backdoor). Opt-in; only meaningful with host network visibility.
+	if cfg.PortsWatch {
+		if netwatch.PortsAvailable {
+			go runPortsWatch(ctx, srv)
+			slog.Info("listening-port monitoring enabled")
+		} else {
+			slog.Warn("LOGFORT_PORTS_WATCH is set but port enumeration is unavailable on this platform")
+		}
+	}
 
 	// Wait for shutdown signal.
 	<-ctx.Done()
@@ -378,6 +433,132 @@ func runBanExpiry(ctx context.Context, st store.Store, resp responder.Responder,
 			return
 		case <-ticker.C:
 			sweep()
+		}
+	}
+}
+
+// runVitalsAlerts pushes a single alert when the data volume crosses the
+// critical fill threshold, re-arming once usage drops back with hysteresis.
+func runVitalsAlerts(ctx context.Context, v *hostinfo.Sampler, srv *api.Server) {
+	const critPercent = 90.0
+	alerted := false
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snap := v.Snapshot()
+			if !snap.Available || snap.DiskTotal == 0 {
+				continue
+			}
+			switch {
+			case snap.DiskUsedPercent >= critPercent && !alerted:
+				alerted = true
+				srv.SendAlert("LogFort: disk almost full",
+					fmt.Sprintf("%s is %.1f%% full (%.1f GB free).",
+						snap.DiskPath, snap.DiskUsedPercent, float64(snap.DiskFree)/1e9))
+			case snap.DiskUsedPercent < critPercent-5:
+				alerted = false
+			}
+		}
+	}
+}
+
+// runCertWatch probes the configured TLS endpoints for certificate expiry,
+// alerting once per endpoint when the remaining lifetime drops to the warning
+// window. Results feed /api/vitals.
+func runCertWatch(ctx context.Context, targets []string, srv *api.Server) {
+	const warnDays = 14
+	warned := make(map[string]bool)
+	check := func() {
+		results := make([]netwatch.CertStatus, 0, len(targets))
+		for _, t := range targets {
+			if ctx.Err() != nil {
+				return
+			}
+			cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			cs := netwatch.CheckCert(cctx, t)
+			cancel()
+			results = append(results, cs)
+			if cs.Error != "" {
+				continue
+			}
+			if cs.DaysLeft <= warnDays {
+				if !warned[t] {
+					warned[t] = true
+					srv.SendAlert("LogFort: TLS certificate expiring",
+						fmt.Sprintf("%s expires in %d day(s).", cs.Target, cs.DaysLeft))
+				}
+			} else {
+				warned[t] = false
+			}
+		}
+		srv.SetCertStatus(results)
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(10 * time.Second):
+	}
+	check()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			check()
+		}
+	}
+}
+
+// runPortsWatch snapshots locally-listening TCP ports every minute and alerts
+// when a new one appears (a common backdoor signature). The first scan sets the
+// baseline silently.
+func runPortsWatch(ctx context.Context, srv *api.Server) {
+	var baseline map[int]bool
+	scan := func() {
+		ports, err := netwatch.ListeningPorts()
+		if err != nil {
+			slog.Warn("listening-port scan failed", "err", err)
+			return
+		}
+		srv.SetListeningPorts(ports)
+		cur := make(map[int]bool, len(ports))
+		for _, p := range ports {
+			cur[p] = true
+		}
+		if baseline == nil {
+			baseline = cur
+			return
+		}
+		var added []int
+		for p := range cur {
+			if !baseline[p] {
+				added = append(added, p)
+			}
+		}
+		if len(added) > 0 {
+			sort.Ints(added)
+			srv.SendAlert("LogFort: new listening port",
+				fmt.Sprintf("New TCP port(s) now listening: %v", added))
+			baseline = cur
+		}
+	}
+
+	scan()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			scan()
 		}
 	}
 }

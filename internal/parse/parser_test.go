@@ -280,7 +280,8 @@ func TestParseFixtureFile(t *testing.T) {
 		{"pam_failure", "203.0.113.20"},
 		{"failed_password", "203.0.113.5"},
 		{"failed_password", "203.0.113.5"},
-		// CRON, kernel, sudo → ErrNoMatch (skipped)
+		{"sudo_session", ""},
+		// CRON, kernel → ErrNoMatch (skipped)
 	}
 
 	lines := []string{
@@ -410,6 +411,92 @@ func TestParseMailLines(t *testing.T) {
 			}
 			if ev.Source != tt.wantSource {
 				t.Errorf("Source: got %q, want %q", ev.Source, tt.wantSource)
+			}
+		})
+	}
+}
+
+func TestParseAuditLines(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		wantType   string
+		wantUser   string
+		wantSource string
+		wantDetail string
+		wantErr    error
+	}{
+		{
+			name:       "sudo success",
+			line:       "Jun 21 14:32:01 host sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update",
+			wantType:   "sudo_session",
+			wantUser:   "alice",
+			wantSource: "sudo",
+			wantDetail: "as root: /usr/bin/apt update",
+		},
+		{
+			name:       "sudo incorrect password",
+			line:       "Jun 21 14:32:05 host sudo:    bob : 1 incorrect password attempt ; TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/su",
+			wantType:   "sudo_fail",
+			wantUser:   "bob",
+			wantSource: "sudo",
+			wantDetail: "1 incorrect password attempt: /bin/su",
+		},
+		{
+			name:       "sudo not in sudoers",
+			line:       "Jun 21 14:32:07 host sudo:    eve : user NOT in sudoers ; TTY=pts/2 ; PWD=/home/eve ; USER=root ; COMMAND=/bin/bash",
+			wantType:   "sudo_fail",
+			wantUser:   "eve",
+			wantSource: "sudo",
+			wantDetail: "user NOT in sudoers: /bin/bash",
+		},
+		{
+			name:       "useradd with UID 0 (backdoor)",
+			line:       "Jun 21 14:32:10 host useradd[4242]: new user: name=backdoor, UID=0, GID=0, home=/home/backdoor, shell=/bin/bash",
+			wantType:   "user_add",
+			wantUser:   "backdoor",
+			wantSource: "useradd",
+			wantDetail: "uid=0 shell=/bin/bash",
+		},
+		{
+			name:       "userdel",
+			line:       "Jun 21 14:32:12 host userdel[4243]: delete user 'olduser'",
+			wantType:   "user_del",
+			wantUser:   "olduser",
+			wantSource: "userdel",
+		},
+		{
+			name:    "sudo pam line is not matched (avoids double count)",
+			line:    "Jun 21 14:32:13 host sudo: pam_unix(sudo:auth): authentication failure; logname=bob uid=1000 euid=0 tty=/dev/pts/1 ruser=bob rhost=  user=bob",
+			wantErr: parse.ErrNoMatch,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := parse.ParseLine(tc.line)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err: got %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ev.EventType != tc.wantType {
+				t.Errorf("EventType: got %q, want %q", ev.EventType, tc.wantType)
+			}
+			if ev.Username != tc.wantUser {
+				t.Errorf("Username: got %q, want %q", ev.Username, tc.wantUser)
+			}
+			if ev.Source != tc.wantSource {
+				t.Errorf("Source: got %q, want %q", ev.Source, tc.wantSource)
+			}
+			if ev.Detail != tc.wantDetail {
+				t.Errorf("Detail: got %q, want %q", ev.Detail, tc.wantDetail)
+			}
+			if ev.IP != "" {
+				t.Errorf("IP: got %q, want empty (local audit event)", ev.IP)
 			}
 		})
 	}

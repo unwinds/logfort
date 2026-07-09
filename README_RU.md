@@ -34,6 +34,11 @@ LogFort следит за вашими логами авторизации и п
 - ✅ **Allowlist** — домашние/офисные IP защищены от бана навсегда, редактируется прямо в UI
 - 📈 **Метрики Prometheus** — эндпоинт `/metrics`: счётчики разобранных строк, активные баны, SSE-клиенты, размер БД; готовый [дашборд Grafana](docs/grafana-dashboard.json) в комплекте
 - 🎬 **Демо-режим** — `LOGFORT_DEMO=true` наполняет дашборд реалистичным синтетическим трафиком, сервер не нужен
+- 🕵️ **Аудит привилегий** — ошибки sudo и `useradd`/`userdel` отслеживаются отдельно от статистики атак, есть опциональное правило уведомлений `sudo`
+- 🧱 **Локальный threat-блоклист** — помечать или сразу банить IP из локального файла IP/CIDR, без внешних запросов
+- 🩺 **Состояние хоста** — CPU, память, диск и load average из `/proc`, отображаются в шапке и в Settings, доступны на `/metrics`
+- 🔏 **Слежение за TLS-сертификатами и портами** — опциональные алерты об истечении сертификата или появлении нового слушающего TCP-порта
+- 🔎 **Профиль IP** — клик по любому IP открывает карточку: первое/последнее появление, разбивка по типам событий, статус бана/allowlist, последняя активность
 
 ---
 
@@ -138,6 +143,15 @@ services:
 | `LOGFORT_HOME_LAT` / `_LON` | _(пусто)_ | Координаты домашнего маркера на карте атак |
 | `LOGFORT_DEMO` | `false` | Демо-режим: синтетический трафик вместо реальных логов (не для продакшена) |
 
+### Threat Intel и мониторинг хоста
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `LOGFORT_BLOCKLIST` | _(пусто)_ | Локальный файл блоклиста IP/CIDR (по одной записи на строку, `#` — комментарии); совпадение помечает событие и отображается в Settings → General |
+| `LOGFORT_BLOCKLIST_AUTOBAN` | `false` | Банить IP сразу при совпадении с блоклистом (нужен включённый responder) |
+| `LOGFORT_TLS_WATCH` | _(пусто)_ | `host[:port]` через запятую (порт по умолчанию `:443`) для слежения за истечением сертификата; алерт при ≤14 днях до истечения |
+| `LOGFORT_PORTS_WATCH` | `false` | Следить за локально слушающими TCP-портами; алерт при появлении нового (только Linux) |
+
 ### Аутентификация
 
 | Переменная | По умолчанию | Описание |
@@ -173,7 +187,7 @@ services:
 | `LOGFORT_NOTIFY_SMTP_HOST` | _(пусто)_ | SMTP-сервер `host:port` (465 = implicit TLS, иначе STARTTLS) |
 | `LOGFORT_NOTIFY_SMTP_USER` / `_PASS` | _(пусто)_ | Учётные данные SMTP (опционально) |
 | `LOGFORT_NOTIFY_SMTP_FROM` / `_TO` | _(пусто)_ | Отправитель и получатели через запятую (нужны оба) |
-| `LOGFORT_NOTIFY_RULES` | _(пусто)_ | Через запятую: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`, `digest:daily`, `digest:weekly` |
+| `LOGFORT_NOTIFY_RULES` | _(пусто)_ | Через запятую: `accepted_login`, `ban`, `new_country`, `sudo`, `threshold:N/dur`, `digest:daily`, `digest:weekly` |
 
 Все каналы также настраиваются на лету в **Settings → Notifications** — без переменных окружения и перезапуска. Переменные окружения всегда имеют приоритет над значениями из UI (такие поля показываются заблокированными).
 
@@ -192,6 +206,8 @@ services:
 | `GET /api/map?window=24h` | Гео-агрегированные точки атак |
 | `GET /api/stream` | Живые события через Server-Sent Events |
 | `GET /api/backup` | Консистентный снапшот SQLite (скачивание) |
+| `GET /api/vitals` | Состояние хоста (CPU/память/диск/load), результаты проверки TLS-сертификатов, слушающие порты |
+| `GET /api/ip?ip=<ip>` | Профиль IP: агрегированные счётчики, geo/ASN/threat, статус бана/allowlist, последние события |
 | `GET /metrics` | Формат Prometheus (учитывает basic auth); [дашборд Grafana](docs/grafana-dashboard.json) в комплекте |
 | `POST /api/ban` / `POST /api/unban` | Ручной бан (нужен responder); `duration_secs` задаёт срок бана (0 = навсегда) |
 
@@ -207,6 +223,7 @@ services:
 | Postfix (`mail.log`) | `proc=postfix/smtpd`, ошибки SASL-аутентификации |
 | Dovecot (`mail.log`) | `proc=dovecot`, ошибки входа imap/pop3-login |
 | fail2ban | Префикс `YYYY-MM-DD HH:MM:SS,ms fail2ban` |
+| sudo / useradd / userdel (аудит привилегий) | `proc=sudo`, `proc=useradd`, `proc=userdel` |
 | systemd journal | `LOGFORT_BACKEND=journald` |
 
 Источник определяется по каждой строке отдельно — в `LOGFORT_LOG_PATHS` можно указать любой набор файлов (например `/host/log/auth.log,/host/log/mail.log`).
