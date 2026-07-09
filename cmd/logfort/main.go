@@ -108,7 +108,7 @@ func main() {
 	if cfg.ASNDB != "" {
 		asnDB, err := geo.OpenASN(cfg.ASNDB)
 		if err != nil {
-			slog.Debug("ASN database unavailable, asn fields will be empty",
+			slog.Warn("ASN database unavailable, asn fields will be empty",
 				"path", cfg.ASNDB, "err", err)
 		} else {
 			defer asnDB.Close()
