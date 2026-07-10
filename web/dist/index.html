@@ -606,7 +606,7 @@
                 <div class="field-group">
                   <label>Keep events for (days)</label>
                   <input type="number" id="retention-days" min="1" max="3650" value="90" style="width:120px">
-                  <span class="field-hint">Events older than this are deleted daily at midnight.</span>
+                  <span class="field-hint">Events older than this are deleted automatically every 24 hours.</span>
                 </div>
               </div>
             </div>
@@ -1047,7 +1047,7 @@
                   <div class="field-row">
                     <input type="text" id="fw-ban-ip" placeholder="IP address (e.g. 1.2.3.4)" style="flex:1;font-family:monospace">
                     <input type="text" id="fw-ban-reason" placeholder="Reason (optional)" style="flex:1;font-family:monospace">
-                    <select id="fw-ban-duration" title="Ban duration">
+                    <select id="fw-ban-duration" title="Ban duration" style="flex:0 0 140px;width:140px;">
                       <option value="0" selected>Permanent</option>
                       <option value="3600">1 hour</option>
                       <option value="86400">24 hours</option>

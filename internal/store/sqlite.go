@@ -208,7 +208,6 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 		limit = 100
 	}
 
-	countArgs := len(args)
 	args = append(args, limit, q.Offset)
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT id,ts,ip,event_type,username,user_valid,auth_method,port,source,country,city,lat,lon,asn,detail,threat FROM events"+
@@ -217,7 +216,6 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, q EventQuery) ([]EventRow,
 		return nil, 0, fmt.Errorf("query events: %w", err)
 	}
 	defer rows.Close()
-	_ = countArgs
 
 	events := []EventRow{}
 	for rows.Next() {

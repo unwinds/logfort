@@ -101,6 +101,11 @@ var fail2banPattern = regexp.MustCompile(`\[(?P<jail>[^\]]+)\]\s+(?P<action>Ban|
 // fail2banPrefix matches the timestamp portion of a fail2ban log line.
 var fail2banPrefix = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+fail2ban`)
 
+// fail2banTS extracts the leading "YYYY-MM-DD HH:MM:SS" timestamp. Compiled
+// once at init — parseFail2BanLine runs for every fail2ban.log line (replayed
+// from the beginning on each start), so a per-call MustCompile is wasteful.
+var fail2banTS = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
+
 // Nginx error.log: "2026/06/22 14:32:01 [error] 12345#12345: *N message"
 var reNginxError = regexp.MustCompile(`^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[\w+\] \d+#\d+: \*\d+ (?P<msg>.+)$`)
 
@@ -406,7 +411,7 @@ func parseNginxAccessLine(line string) (*Event, error) {
 
 func parseFail2BanLine(line string) (*Event, error) {
 	// Extract timestamp from fail2ban prefix: "2026-06-21 14:40:00,123 ..."
-	tsMatch := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`).FindString(line)
+	tsMatch := fail2banTS.FindString(line)
 	if tsMatch == "" {
 		return nil, ErrNoMatch
 	}

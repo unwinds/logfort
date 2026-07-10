@@ -21,7 +21,7 @@ LogFort следит за вашими логами авторизации и п
 - 🗺️ **Офлайн карта атак** — Leaflet + встроенный GeoJSON, внешние тайл-серверы не нужны
 - 📊 **Статистика и таймлайн** — топ атакующих IP, логинов, стран; почасовой/ежедневный бар-чарт
 - 🚫 **Бан в один клик** — блокировка через nftables или fail2ban с полной историей банов/разбанов и **опциональным сроком** (от 1 часа до 30 дней или навсегда); истёкшие баны снимаются автоматически
-- 🔔 **Уведомления** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP) или любой webhook; правила: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`, `digest:daily`, `digest:weekly`
+- 🔔 **Уведомления** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP) или любой webhook; правила: `accepted_login`, `ban`, `new_country`, `sudo`, `threshold:N/dur`, `digest:daily`, `digest:weekly`
 - 📰 **Ежедневные / еженедельные дайджесты** — утренняя сводка попыток, топ-атакующих и банов в любой канал уведомлений
 - 📋 **Браузер событий** — пагинация, фильтры по типу, IP и логину, кликабельные IP, экспорт в CSV одной кнопкой
 - 📁 **Несколько источников логов** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, **Postfix SASL** + **Dovecot** (почтовый брутфорс), `fail2ban.log`, systemd journal

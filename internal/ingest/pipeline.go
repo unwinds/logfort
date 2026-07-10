@@ -152,6 +152,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 					if !errors.Is(err, context.Canceled) {
 						slog.Error("store event", "err", err)
 					}
+					// The event was not persisted; skip publish so SSE, notify
+					// and auto-ban never act on an event the DB rejected.
+					continue
 				}
 				if p.publish != nil {
 					p.publish(ev)

@@ -21,7 +21,7 @@ LogFort watches your auth logs and shows you a live browser dashboard: who is at
 - 🗺️ **Offline attack map** — Leaflet + embedded GeoJSON, no external tile servers required
 - 📊 **Stats & timeline** — top attacker IPs, usernames, countries; hourly/daily bar chart
 - 🚫 **One-click banning** — active block via nftables or fail2ban, with full ban/unban history and **optional expiry** (1 hour … 30 days or permanent); expired bans are lifted automatically
-- 🔔 **Notifications** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP), or any webhook; rules: `accepted_login`, `ban`, `new_country`, `threshold:N/dur`, `digest:daily`, `digest:weekly`
+- 🔔 **Notifications** — Telegram, Discord, Slack, ntfy, Gotify, Email (SMTP), or any webhook; rules: `accepted_login`, `ban`, `new_country`, `sudo`, `threshold:N/dur`, `digest:daily`, `digest:weekly`
 - 📰 **Daily / weekly digests** — a morning summary of attempts, top attackers, and bans, delivered to any notification channel
 - 📋 **Events browser** — pagination, type/IP/username filters, clickable IPs, one-click CSV export
 - 📁 **Multiple log sources** — sshd `auth.log` / `secure`, nginx `error.log` + `access.log`, **Postfix SASL** + **Dovecot** mail auth, `fail2ban.log`, systemd journal
