@@ -1004,6 +1004,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"rules":                strings.Join(s.cfg.NotifyRules, ","),
 		"retention_days":       s.cfg.RetentionDays,
+		"language":             s.cfg.Language,
 		"autoban_enabled":      s.cfg.AutoBanEnabled,
 		"autoban_threshold":    s.cfg.AutoBanThreshold,
 		"autoban_window":       s.cfg.AutoBanWindow,
@@ -1072,6 +1073,7 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 		Rules *string `json:"rules"`
 		// General settings
 		RetentionDays    *int    `json:"retention_days"`
+		Language         *string `json:"language"`
 		AutoBanEnabled   *bool   `json:"autoban_enabled"`
 		AutoBanThreshold *int    `json:"autoban_threshold"`
 		AutoBanWindow    *string `json:"autoban_window"`
@@ -1130,6 +1132,13 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	// General fields (no env pins; nil = skip).
 	if req.RetentionDays != nil && *req.RetentionDays > 0 {
 		proposed.RetentionDays = *req.RetentionDays
+	}
+	if req.Language != nil {
+		if !config.SupportedLanguages[*req.Language] {
+			writeError(w, http.StatusBadRequest, "unsupported language (want en or ru)")
+			return
+		}
+		proposed.Language = *req.Language
 	}
 	if req.AutoBanEnabled != nil {
 		proposed.AutoBanEnabled = *req.AutoBanEnabled
@@ -1234,6 +1243,9 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	if req.RetentionDays != nil {
 		toSave["general.retention_days"] = strconv.Itoa(proposed.RetentionDays)
 	}
+	if req.Language != nil {
+		toSave["general.language"] = proposed.Language
+	}
 	if req.AutoBanEnabled != nil {
 		if proposed.AutoBanEnabled {
 			toSave["autoban.enabled"] = "true"
@@ -1266,6 +1278,7 @@ func (s *Server) handlePostSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfg.NotifyRules = proposed.NotifyRules
 	s.cfg.RetentionDays = proposed.RetentionDays
+	s.cfg.Language = proposed.Language
 	s.cfg.AutoBanEnabled = proposed.AutoBanEnabled
 	s.cfg.AutoBanThreshold = proposed.AutoBanThreshold
 	s.cfg.AutoBanWindow = proposed.AutoBanWindow

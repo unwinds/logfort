@@ -16,7 +16,15 @@ const (
 	// are mostly dynamic, so permanent auto-bans slowly poison the blocklist
 	// with addresses that long since moved on to legitimate owners.
 	DefaultAutoBanBanTime = int64(24 * 3600)
+
+	// DefaultLanguage is the UI language used when none is stored in the DB.
+	DefaultLanguage = "en"
 )
+
+// SupportedLanguages is the set of UI languages the dashboard ships with.
+// Used by OverlaySettings and the settings API so an unknown value is never
+// persisted or applied.
+var SupportedLanguages = map[string]bool{"en": true, "ru": true}
 
 // Config holds all runtime configuration loaded from environment variables.
 type Config struct {
@@ -76,7 +84,8 @@ type Config struct {
 	AutoBanEnabled   bool
 	AutoBanThreshold int
 	AutoBanWindow    string
-	AutoBanBanTime   int64 // seconds an auto-ban lasts; 0 = permanent
+	AutoBanBanTime   int64  // seconds an auto-ban lasts; 0 = permanent
+	Language         string // UI language ("en"/"ru"); purely a dashboard preference
 
 	// fail2ban jail tuning managed from the UI (persisted in DB; 0 = not
 	// managed). Applied to the running fail2ban via its command socket.
@@ -121,6 +130,7 @@ func Load() (*Config, error) {
 		AutoBanThreshold: DefaultAutoBanThreshold,
 		AutoBanWindow:    DefaultAutoBanWindow,
 		AutoBanBanTime:   DefaultAutoBanBanTime,
+		Language:         DefaultLanguage,
 	}
 
 	// Log paths (comma-separated)
@@ -262,6 +272,15 @@ func (c *Config) OverlaySettings(s map[string]string) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.RetentionDays = n
 		}
+	}
+
+	// UI language — purely UI-controlled, always overlay from DB. Ignore an
+	// unrecognised value so a hand-edited DB row can never wedge the UI.
+	if v := s["general.language"]; v != "" && SupportedLanguages[v] {
+		c.Language = v
+	}
+	if c.Language == "" {
+		c.Language = DefaultLanguage
 	}
 
 	// Auto-ban — purely UI-controlled, always overlay from DB.

@@ -251,7 +251,22 @@ fi
 
 # ── backend selection ─────────────────────────────────────────────────────────
 BACKEND="file"
+
+# Auto-detect the sshd systemd unit: Debian/Ubuntu name the real unit
+# "ssh.service" (with "sshd.service" frequently present only as an alias),
+# Fedora/RHEL/CentOS name it "sshd.service". Following the wrong unit makes
+# `journalctl --unit=…` return nothing *silently* (no error), so the dashboard
+# stays empty with no clue why. Check ssh.service FIRST so Debian/Ubuntu latch
+# onto their real unit instead of the sshd.service alias (which journalctl
+# inside the container cannot resolve back to ssh.service).
 JOURNALD_UNIT="ssh.service"
+if command -v systemctl &>/dev/null; then
+  if systemctl list-unit-files 2>/dev/null | grep -Eq '^ssh\.service'; then
+    JOURNALD_UNIT="ssh.service"
+  elif systemctl list-unit-files 2>/dev/null | grep -Eq '^sshd\.service'; then
+    JOURNALD_UNIT="sshd.service"
+  fi
+fi
 
 # Auto-suggest journald when no auth log file is present.
 HAS_AUTH_LOG=false
@@ -275,7 +290,7 @@ if [[ "$backend_choice" == "2" ]]; then
     error "journalctl not found — journald backend requires systemd on the host. Switch to file backend or install systemd."
   fi
   BACKEND="journald"
-  ask "systemd unit to follow [ssh.service]:"
+  ask "systemd unit to follow [${JOURNALD_UNIT}]:"
   read_tty unit_input
   [[ -n "$unit_input" ]] && JOURNALD_UNIT="$unit_input"
   info "journald backend: unit=$JOURNALD_UNIT"
