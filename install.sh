@@ -259,11 +259,20 @@ BACKEND="file"
 # stays empty with no clue why. Check ssh.service FIRST so Debian/Ubuntu latch
 # onto their real unit instead of the sshd.service alias (which journalctl
 # inside the container cannot resolve back to ssh.service).
+#
+# Capture the unit list ONCE and match it via a here-string, NOT
+# `systemctl … | grep -q`: under `set -o pipefail` (set at the top of this
+# script) grep -q exits on the first match and closes the pipe, systemctl then
+# dies with SIGPIPE, and pipefail reports the whole pipeline as failed — so the
+# matching branch is silently skipped and JOURNALD_UNIT falls back to the wrong
+# default. That is exactly what left Fedora stuck on ssh.service (empty
+# dashboard): its match is in the sshd.service branch.
 JOURNALD_UNIT="ssh.service"
 if command -v systemctl &>/dev/null; then
-  if systemctl list-unit-files 2>/dev/null | grep -Eq '^ssh\.service'; then
+  unit_files="$(systemctl list-unit-files 2>/dev/null || true)"
+  if grep -Eq '^ssh\.service' <<<"$unit_files"; then
     JOURNALD_UNIT="ssh.service"
-  elif systemctl list-unit-files 2>/dev/null | grep -Eq '^sshd\.service'; then
+  elif grep -Eq '^sshd\.service' <<<"$unit_files"; then
     JOURNALD_UNIT="sshd.service"
   fi
 fi
