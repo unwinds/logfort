@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/unwinds/logfort/main/install.sh | s
 ```
 
 The script:
-- Detects your distro (Debian/Ubuntu/RHEL/Rocky/Alma)
+- Detects your distro (Debian/Ubuntu/RHEL/Fedora/Rocky/Alma)
 - Optionally installs Docker and fail2ban, and tunes the sshd jail with **exact attempt counting** — you choose attempts-before-ban and ban duration, and the values are verified after restart (the stock fail2ban filter counts extra log lines, banning after 2 of "3" attempts; LogFort ships a corrected filter)
 - Optionally enables **fail2ban control from the web UI** (ban/unban IPs, change attempts/ban duration in Settings → Firewall)
 - Lets you choose **Docker** (recommended) or **bare-metal** install (release binary + systemd unit — no Docker needed)
