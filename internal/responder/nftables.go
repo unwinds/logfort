@@ -115,10 +115,14 @@ func (r *NftablesResponder) ensureSets() error {
 	tbl := c.AddTable(&nftables.Table{Family: r.family, Name: r.table})
 
 	if _, err := c.GetSetByName(tbl, r.setV4); err != nil {
-		c.AddSet(&nftables.Set{Table: tbl, Name: r.setV4, KeyType: nftables.TypeIPAddr}, nil)
+		if err := c.AddSet(&nftables.Set{Table: tbl, Name: r.setV4, KeyType: nftables.TypeIPAddr}, nil); err != nil {
+			return fmt.Errorf("add set %q: %w", r.setV4, err)
+		}
 	}
 	if _, err := c.GetSetByName(tbl, r.setV6); err != nil {
-		c.AddSet(&nftables.Set{Table: tbl, Name: r.setV6, KeyType: nftables.TypeIP6Addr}, nil)
+		if err := c.AddSet(&nftables.Set{Table: tbl, Name: r.setV6, KeyType: nftables.TypeIP6Addr}, nil); err != nil {
+			return fmt.Errorf("add set %q: %w", r.setV6, err)
+		}
 	}
 	return c.Flush()
 }
