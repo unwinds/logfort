@@ -31,6 +31,11 @@ jobs:
             exit 1
           fi
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
       - name: go vet
         run: go vet ./...
 
@@ -39,6 +44,41 @@ jobs:
 
       - name: go test (race)
         run: go test -race -count=1 ./...
+
+  cross-build:
+    name: Cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Release targets — verify the arch-specific linux code compiles for
+          # every architecture goreleaser ships, not just the amd64 CI runner.
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+          # Non-linux target guards the //go:build !linux stubs (hostinfo,
+          # netwatch ports, nftables), which the linux-only test job never
+          # compiles. windows/amd64 is also the primary development platform.
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: go build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: go build ./...
 
   build:
     name: Docker build (multi-arch)

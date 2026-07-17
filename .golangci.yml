@@ -1,0 +1,28 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Keeps the standard set (errcheck, govet, ineffassign, staticcheck, unused)
+  # and adds a few high-signal checks relevant to a network daemon that does
+  # HTTP, SQL and file I/O.
+  default: standard
+  enable:
+    - bodyclose      # HTTP response bodies must be closed (notifiers, health probes)
+    - sqlclosecheck  # sql.Rows / sql.Stmt must be closed (store package)
+    - rowserrcheck   # rows.Err() must be checked after iterating
+    - nilerr         # returning nil after a non-nil error check
+    - unconvert      # redundant type conversions
+  exclusions:
+    generated: lax
+    presets:
+      # Ignore unchecked errors on cleanup/output calls that are idiomatic to
+      # drop: deferred Close/Flush, fmt.Fprint* to a ResponseWriter, os.Remove
+      # of a temp file, etc. Real error paths are still checked.
+      - std-error-handling
+    rules:
+      # Test files may ignore errors from cleanup/setup helpers for brevity.
+      - path: _test\.go
+        linters:
+          - errcheck

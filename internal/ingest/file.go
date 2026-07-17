@@ -72,7 +72,7 @@ func (f *fileSource) Start(ctx context.Context, out chan<- string) error {
 	slog.Info("tailing log file", "path", f.path)
 
 	defer func() {
-		t.Stop()
+		_ = t.Stop()
 		t.Cleanup()
 	}()
 

@@ -71,27 +71,43 @@ func (s *SQLiteStore) applyPragmas() error {
 	return nil
 }
 
+// appliedMigrations returns the set of schema versions already recorded. The
+// rows are closed before returning so the single pooled connection is free for
+// the migration writes that follow.
+func (s *SQLiteStore) appliedMigrations() (map[int]bool, error) {
+	rows, err := s.db.Query("SELECT version FROM schema_migrations ORDER BY version")
+	if err != nil {
+		return nil, fmt.Errorf("query migrations: %w", err)
+	}
+	defer rows.Close()
+	applied := make(map[int]bool)
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate migrations: %w", err)
+	}
+	return applied, nil
+}
+
 func (s *SQLiteStore) migrate() error {
 	// Ensure migrations table exists.
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
 	}
 
-	// Load applied versions.
-	rows, err := s.db.Query("SELECT version FROM schema_migrations ORDER BY version")
+	// Load applied versions. Read them in a helper so the rows (and the single
+	// pooled connection) are released before we start running migrations below —
+	// the store caps the pool at one connection, so holding rows open here would
+	// deadlock the migration writes.
+	applied, err := s.appliedMigrations()
 	if err != nil {
-		return fmt.Errorf("query migrations: %w", err)
+		return err
 	}
-	applied := make(map[int]bool)
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
-			return err
-		}
-		applied[v] = true
-	}
-	rows.Close()
 
 	// Collect migration files sorted by version number.
 	entries, err := fs.ReadDir(migrationsFS, "migrations")
@@ -125,12 +141,12 @@ func (s *SQLiteStore) migrate() error {
 		}
 		for _, stmt := range splitSQL(string(data)) {
 			if _, err := tx.Exec(stmt); err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return fmt.Errorf("exec migration %s: %w", entry.Name(), err)
 			}
 		}
 		if _, err := tx.Exec("INSERT INTO schema_migrations(version, applied_at) VALUES(?,?)", version, time.Now().Unix()); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -177,14 +193,15 @@ func (s *SQLiteStore) InsertEvent(ctx context.Context, e *parse.Event) error {
 	// Mirror ban/unban events into the bans table.
 	// Use WHERE NOT EXISTS to skip insertion when an active ban for this IP
 	// already exists — prevents duplicate rows on log re-reads at restart.
-	if e.EventType == "ban" {
+	switch e.EventType {
+	case "ban":
 		_, err = s.db.ExecContext(ctx, `
 			INSERT INTO bans(ip, jail, banned_at, active, source, reason)
 			SELECT ?,?,?,1,'fail2ban',?
 			WHERE NOT EXISTS (SELECT 1 FROM bans WHERE ip=? AND active=1)`,
 			e.IP, nullStr(e.Username), e.TS.Unix(), nullStr(""), e.IP,
 		)
-	} else if e.EventType == "unban" {
+	case "unban":
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE bans SET active=0, unbanned_at=? WHERE ip=? AND active=1 AND source='fail2ban'`,
 			e.TS.Unix(), e.IP,
@@ -331,6 +348,9 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 		t.Country = country.String
 		st.TopIPs = append(st.TopIPs, t)
 	}
+	if err := topIPRows.Err(); err != nil {
+		return nil, err
+	}
 	topIPRows.Close()
 
 	// Top countries
@@ -347,6 +367,9 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 			return nil, err
 		}
 		st.TopCountries = append(st.TopCountries, t)
+	}
+	if err := tcRows.Err(); err != nil {
+		return nil, err
 	}
 	tcRows.Close()
 
@@ -365,6 +388,9 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 		}
 		st.TopUsernames = append(st.TopUsernames, t)
 	}
+	if err := tuRows.Err(); err != nil {
+		return nil, err
+	}
 	tuRows.Close()
 
 	// Timeline buckets
@@ -381,6 +407,9 @@ func (s *SQLiteStore) GetStats(ctx context.Context, window string) (*Stats, erro
 			return nil, err
 		}
 		st.Timeline = append(st.Timeline, b)
+	}
+	if err := tlRows.Err(); err != nil {
+		return nil, err
 	}
 	tlRows.Close()
 
@@ -614,7 +643,7 @@ func (s *SQLiteStore) SetSettings(ctx context.Context, pairs map[string]string) 
 		if _, err := tx.ExecContext(ctx,
 			"INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
 			k, v); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("set setting %q: %w", k, err)
 		}
 	}

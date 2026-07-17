@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build
 go build -ldflags="-X main.version=dev" -o ./logfort ./cmd/logfort
 
-# Lint
+# Lint (config: .golangci.yml, v2 format; enforced in CI alongside gofmt)
 golangci-lint run
 
 # Tests (always run with -race)
@@ -306,6 +306,7 @@ For local Docker builds use `Dockerfile` (full multi-stage build with Go toolcha
 ## Conventions
 
 - Commits: Conventional Commits — `feat(pkg):`, `fix(pkg):`, `chore:`, `test:`, `docs:`.
+- Security reports go through the private channel in [SECURITY.md](SECURITY.md) (GitHub private vulnerability reporting), not a public issue — do not point reporters at the issue tracker.
 - Language: communicate with the user in **Russian**; code, identifiers, config keys, comments — **English**.
 - `context.Context` threaded through all store and ingest calls.
 - Structured logging via `log/slog` (JSON handler, no `fmt.Print*` in runtime paths).
@@ -319,3 +320,5 @@ For local Docker builds use `Dockerfile` (full multi-stage build with Go toolcha
 - `store.SetSettings(ctx, map[string]string)` atomically persists multiple key-value pairs in a single SQLite transaction; use it instead of calling `SetSetting` in a loop when saving multi-field settings to avoid partial-write inconsistency on DB errors.
 - When adding new methods to `store.Store` interface, also add stub implementations to `mockStore` in `internal/api/api_test.go`, `stubStore` in `internal/notify/dispatcher_test.go`, and `stubStore` in `internal/ingest/pipeline_test.go`. When changing `ingest.Source`, update `fakeSource` in `internal/ingest/pipeline_test.go` (implements `Info()`).
 - `internal/f2b` has no external dependencies — the pickle codec is hand-rolled and tested against fixed byte fixtures plus a fake unix-socket server (`f2b_test.go`); tests skip automatically where unix sockets are unavailable.
+- `internal/api/integration_test.go` has a boot-smoke pattern (`TestSmoke_EndToEnd`): wires a real `store.New(":memory:")`, a real `ingest.Pipeline`, and a real `api.Server` behind `httptest.NewServer`, feeds raw log lines through `parse.ParseLine`, and asserts over actual HTTP responses (`/api/health`, `/api/events`, `/api/stats`). Prefer this over `mockStore` when a change spans ingest→store→API — it catches wiring mistakes mocks can't. Keep assertions date-independent (`window=all` → `since=0`; no `since`/`until` on `/api/events`) since fixture timestamps are fixed strings, not `time.Now()`.
+- CI (`.github/workflows/ci.yml`) has three jobs: `test` (gofmt + golangci-lint + vet + build + `go test -race` on `ubuntu-latest`), `cross-build` (compiles `linux/arm64`, `linux/arm` GOARM=7, and `windows/amd64` — the last is the only CI coverage for the `//go:build !linux` stubs in `hostinfo`, `netwatch`, and `responder`, which the linux-only `test` job never touches), and `build` (multi-arch Docker build, no push). A change to arch-specific code is not verified by `test` alone.
